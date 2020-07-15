@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
+
+	"github.com/manifoldco/promptui"
 )
 
 func configFileExists(filename string) bool {
@@ -28,14 +32,16 @@ type projecto struct {
 	Projects      []project `json:"projects"`
 }
 
-func writeConfigFile(content []byte, homeDir string) {
+func writeConfigFile(configFromFile projecto, homeDir string) {
+
+	bs, err := json.MarshalIndent(configFromFile, "", "\t")
+	check(err)
 	f, err := os.Create(homeDir + "/projecto.json")
 	defer f.Close()
 	check(err)
 
-	_, e := f.WriteString(string(content))
+	_, e := f.WriteString(string(bs))
 	check(e)
-	fmt.Println("Sucessfully added")
 
 }
 
@@ -84,23 +90,73 @@ func main() {
 		file.Close()
 	}
 
-	arg := os.Args[1]
+	add := flag.Bool("add", false, "Add a project")
+	remove := flag.Bool("remove", false, "Remove a project")
 
-	if arg == "add" {
+	flag.Parse()
+
+	if len(os.Args) == 1 {
+		projects := readConfigFile(homeDir)
+		var names []string
+		for _, element := range projects.Projects {
+			names = append(names, element.Name)
+		}
+		fmt.Println(names)
+
+		list := promptui.Select{
+			Label: "Available projects",
+			Items: names,
+		}
+		idx, _, err := list.Run()
+		check(err)
+
+		err = exec.Command("code", projects.Projects[idx].Path).Start()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Println(projects.Projects[idx].Path)
+
+		return
+	}
+
+	if *add {
 
 		configFromFile := readConfigFile(homeDir)
 
 		configFromFile.Projects = append(configFromFile.Projects, project{
-			Name: currentDir()[0],
-			Path: currentDir()[1],
+			Path: currentDir()[0],
+			Name: currentDir()[1],
 		})
 
-		fmt.Println(configFromFile)
+		writeConfigFile(configFromFile, homeDir)
+		fmt.Println("Sucessfully added")
 
-		bs, err := json.MarshalIndent(configFromFile, "", "\t")
+		return
+
+	}
+
+	if *remove {
+
+		configFromFile := readConfigFile(homeDir)
+
+		var names []string
+		for _, element := range configFromFile.Projects {
+			names = append(names, element.Name)
+		}
+
+		list := promptui.Select{
+			Label: "Available projects",
+			Items: names,
+		}
+		index, _, err := list.Run()
 		check(err)
+		configFromFile.Projects = append(configFromFile.Projects[:index], configFromFile.Projects[index+1:]...)
 
-		writeConfigFile(bs, homeDir)
+		writeConfigFile(configFromFile, homeDir)
+		fmt.Println("Sucessfully removed")
+
+		return
 
 	}
 
