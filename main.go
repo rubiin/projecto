@@ -1,109 +1,193 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
+	"flag"
 	"fmt"
-	"log"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
+
+	"github.com/manifoldco/promptui"
+	"github.com/rubiin/projecto/helper"
 )
 
-func configFileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
-
-type project struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Editor string `json:"editor,omitempty"`
-}
-
-type projecto struct {
-	CommandToOpen string    `json:"commandToOpen"`
-	Projects      []project `json:"projects"`
-}
-
-func writeConfigFile(content []byte, homeDir string) {
-	f, err := os.Create(homeDir + "/projecto.json")
-	defer f.Close()
-	check(err)
-
-	_, e := f.WriteString(string(content))
-	check(e)
-	fmt.Println("Sucessfully added")
-
-}
-
-func readConfigFile(homeDir string) projecto {
-	var config string
-
-	f, err := os.OpenFile(homeDir+"/projecto.json", os.O_RDONLY, 0644)
-	check(err)
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		config += scanner.Text()
-	}
-
-	check(err)
-	var configFromFile projecto
-
-	err = json.Unmarshal([]byte(config), &configFromFile)
-	check(err)
-	return configFromFile
-
-}
-
-func check(e error) {
-	if e != nil {
-		log.Fatalln(e)
-	}
-}
-
-func currentDir() []string {
-	path, err := os.Getwd()
-	check(err)
-	pathArr := strings.Split(path, "/")
-	return []string{path, pathArr[len(pathArr)-1]}
-}
-
 func main() {
-	homeDir, err := os.UserHomeDir()
 
-	check(err)
+	templates := &promptui.PromptTemplates{
+		Prompt:  "{{ . }} ",
+		Valid:   "{{ . | green }} ",
+		Invalid: "{{ . | red }} ",
+		Success: "{{ . | bold }} ",
+	}
 
-	if !configFileExists(homeDir + "/projecto.json") {
+	validate := func(input string) error {
+		_, err := regexp.Match(`[a-z]`, []byte(input))
+		return err
+	}
 
-		file, err := os.Create(homeDir + "/projecto.json")
-		check(err)
+	configDir, err := os.UserConfigDir()
+
+	helper.CheckError(err)
+
+	if !helper.ConfigFileExists(configDir + "/projecto.json") {
+
+		file, err := os.Create(configDir + "/projecto.json")
+		helper.CheckError(err)
+		file.WriteString(`{
+				"commandToOpen": "code",
+				"projects": []
+					}`)
 		file.Close()
 	}
 
-	arg := os.Args[1]
+	add := flag.Bool("add", false, "Add a project")
+	remove := flag.Bool("rm", false, "Remove a project")
+	open := flag.Bool("open", false, "Open a project")
+	seteditor := flag.String("seteditor", "code", "Sets global editor for project.This is used for projects where editor is not set")
+	editor := flag.Bool("editor", false, "Sets an editor for this project.Should be used along with --add")
+	rmeditor := flag.Bool("rmeditor", false, "Removes editor for from the project")
+	edit := flag.Bool("edit", false, "Opens the config file in default editor")
 
-	if arg == "add" {
+	flag.Parse()
 
-		configFromFile := readConfigFile(homeDir)
+	if helper.IsFlagPassed("seteditor") {
+		projects := helper.ReadConfigFile(configDir)
+		projects.CommandToOpen = *seteditor
 
-		configFromFile.Projects = append(configFromFile.Projects, project{
-			Name: currentDir()[0],
-			Path: currentDir()[1],
-		})
+		helper.WriteConfigFile(projects, configDir)
 
-		fmt.Println(configFromFile)
-
-		bs, err := json.MarshalIndent(configFromFile, "", "\t")
-		check(err)
-
-		writeConfigFile(bs, homeDir)
+		fmt.Println(helper.GREEN + "✅ Successfully updated editor" + helper.RESET)
 
 	}
 
-	// flag.Parse()
+	if *edit {
+		helper.OpenConfigFile()
+		return
+	}
+
+	if *open {
+
+		templates := &promptui.SelectTemplates{
+			Label:    "{{ . }}?",
+			Active:   "\U0001f449{{ .Name | cyan }} ",
+			Inactive: "  {{ .Name | cyan }} ",
+			Selected: "\U0001f449{{ .Name | red | cyan }}",
+		}
+
+		projects := helper.ReadConfigFile(configDir)
+
+		list := promptui.Select{
+			Label:     "Available projects",
+			Items:     projects.Projects,
+			Size:      8,
+			Templates: templates,
+		}
+		index, _, err := list.Run()
+		helper.CheckError(err)
+
+		editor := projects.Projects[index].Editor
+
+		if projects.Projects[index].Editor == "" {
+
+			editor = projects.CommandToOpen
+		}
+
+		err = exec.Command(editor, projects.Projects[index].Path).Start()
+		helper.CheckError(err)
+
+		return
+	}
+
+	if *add {
+
+		configFromFile := helper.ReadConfigFile(configDir)
+
+		newProject := helper.Project{
+			Path: helper.CurrentDir()[0],
+			Name: helper.CurrentDir()[1],
+		}
+
+		if *editor {
+			editorsList := []string{"Code", "Atom", "Sublime", "Other"}
+
+			list := promptui.Select{
+				Label: "Select a global editor",
+				Items: editorsList,
+			}
+			index, _, err := list.Run()
+			helper.CheckError(err)
+
+			if index == 3 {
+				var cmd string
+				prompt := promptui.Prompt{
+					Label:     "Spicy Level",
+					Templates: templates,
+					Validate:  validate,
+				}
+				cmd, err := prompt.Run()
+				helper.CheckError(err)
+				newProject.Editor = cmd
+			} else {
+				newProject.Editor = strings.ToLower(editorsList[index])
+
+			}
+
+		}
+
+		configFromFile.Projects = append(configFromFile.Projects, newProject)
+
+		helper.WriteConfigFile(configFromFile, configDir)
+
+		fmt.Println(helper.GREEN + "✅ Sucessfully added" + helper.RESET)
+
+		return
+
+	}
+
+	if *rmeditor {
+
+		configFromFile := helper.ReadConfigFile(configDir)
+		var names []string
+		for _, element := range configFromFile.Projects {
+			names = append(names, element.Name)
+		}
+		list := promptui.Select{
+			Label: "Available projects",
+			Items: names,
+		}
+		index, _, err := list.Run()
+		helper.CheckError(err)
+		configFromFile.Projects[index].Editor = ""
+		helper.WriteConfigFile(configFromFile, configDir)
+		fmt.Println(helper.GREEN + "❌ Successfully removed for the project" + helper.RESET)
+
+		return
+
+	}
+
+	if *remove {
+
+		configFromFile := helper.ReadConfigFile(configDir)
+
+		var names []string
+		for _, element := range configFromFile.Projects {
+			names = append(names, element.Name)
+		}
+
+		list := promptui.Select{
+			Label: "Available projects",
+			Items: names,
+		}
+		index, _, err := list.Run()
+		helper.CheckError(err)
+		configFromFile.Projects = append(configFromFile.Projects[:index], configFromFile.Projects[index+1:]...)
+
+		helper.WriteConfigFile(configFromFile, configDir)
+		fmt.Println(helper.GREEN + "❌ Successfully removed" + helper.RESET)
+
+		return
+
+	}
 
 }
