@@ -13,14 +13,6 @@ import (
 	"github.com/manifoldco/promptui"
 )
 
-func configFileExists(filename string) bool {
-	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
-		return false
-	}
-	return !info.IsDir()
-}
-
 type project struct {
 	Name   string `json:"name"`
 	Path   string `json:"path"`
@@ -31,6 +23,12 @@ type projecto struct {
 	CommandToOpen string    `json:"commandToOpen"`
 	Projects      []project `json:"projects"`
 }
+
+var red = "\033[31m"
+var green = "\033[32m"
+var yellow = "\033[33m"
+var blue = "\033[34m"
+var reset = "\033[0m"
 
 func writeConfigFile(configFromFile projecto, homeDir string) {
 
@@ -71,11 +69,29 @@ func check(e error) {
 	}
 }
 
+func isFlagPassed(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
 func currentDir() []string {
 	path, err := os.Getwd()
 	check(err)
 	pathArr := strings.Split(path, "/")
 	return []string{path, pathArr[len(pathArr)-1]}
+}
+
+func configFileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
 }
 
 func main() {
@@ -87,21 +103,37 @@ func main() {
 
 		file, err := os.Create(homeDir + "/projecto.json")
 		check(err)
+		file.WriteString(`{
+				"commandToOpen": "code",
+				"projects": []
+					}`)
 		file.Close()
 	}
 
 	add := flag.Bool("add", false, "Add a project")
 	remove := flag.Bool("remove", false, "Remove a project")
+	open := flag.Bool("open", false, "Open a project")
+	seteditor := flag.String("seteditor", "code", "Sets default editor for project")
+	editor := flag.Bool("editor", false, "Sets editor for this project")
 
 	flag.Parse()
 
-	if len(os.Args) == 1 {
+	if isFlagPassed("seteditor") {
+		projects := readConfigFile(homeDir)
+		projects.CommandToOpen = *seteditor
+
+		writeConfigFile(projects, homeDir)
+
+		fmt.Println(green + "✅ Sucessfully updated editor" + reset)
+
+	}
+
+	if *open {
 		projects := readConfigFile(homeDir)
 		var names []string
 		for _, element := range projects.Projects {
 			names = append(names, element.Name)
 		}
-		fmt.Println(names)
 
 		list := promptui.Select{
 			Label: "Available projects",
@@ -110,12 +142,10 @@ func main() {
 		idx, _, err := list.Run()
 		check(err)
 
-		err = exec.Command("code", projects.Projects[idx].Path).Start()
+		err = exec.Command(projects.Projects[idx].Editor, projects.Projects[idx].Path).Start()
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		fmt.Println(projects.Projects[idx].Path)
 
 		return
 	}
@@ -124,13 +154,38 @@ func main() {
 
 		configFromFile := readConfigFile(homeDir)
 
-		configFromFile.Projects = append(configFromFile.Projects, project{
+		newProject := project{
 			Path: currentDir()[0],
 			Name: currentDir()[1],
-		})
+		}
+
+		if *editor {
+			editorsList := []string{"Code", "Atom", "Sublime", "Other"}
+
+			list := promptui.Select{
+				Label: "Select an editor for this project",
+				Items: editorsList,
+			}
+			index, _, err := list.Run()
+			check(err)
+
+			if index == 3 {
+				var cmd string
+				fmt.Println("Enter" + yellow + " command " + reset + "that you use to open Editor from Terminal")
+				fmt.Scanf("%s", &cmd)
+				newProject.Editor = cmd
+			} else {
+				newProject.Editor = strings.ToLower(editorsList[index])
+
+			}
+
+		}
+
+		configFromFile.Projects = append(configFromFile.Projects, newProject)
 
 		writeConfigFile(configFromFile, homeDir)
-		fmt.Println("Sucessfully added")
+
+		fmt.Println(green + "✅ Sucessfully added" + reset)
 
 		return
 
@@ -154,12 +209,10 @@ func main() {
 		configFromFile.Projects = append(configFromFile.Projects[:index], configFromFile.Projects[index+1:]...)
 
 		writeConfigFile(configFromFile, homeDir)
-		fmt.Println("Sucessfully removed")
+		fmt.Println(green + "❌ Sucessfully removed" + green)
 
 		return
 
 	}
-
-	// flag.Parse()
 
 }
