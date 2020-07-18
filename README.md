@@ -31,6 +31,9 @@ Opens a list where you can open the selected project
 `projecto --rmeditor`
 Removes editor for from the project.
 
+`projecto --help`
+Displays all the options that can be used
+
 
 
 
