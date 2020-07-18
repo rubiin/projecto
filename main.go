@@ -31,8 +31,8 @@ func main() {
 	add := flag.Bool("add", false, "Add a project")
 	remove := flag.Bool("remove", false, "Remove a project")
 	open := flag.Bool("open", false, "Open a project")
-	seteditor := flag.String("seteditor", "code", "Sets default editor for project")
-	editor := flag.Bool("editor", false, "Sets a gloab editor, this is used for projects where editor is not set")
+	seteditor := flag.String("seteditor", "code", "Sets global editor for project.This is used for projects where editor is not set")
+	editor := flag.Bool("editor", false, "Sets an editor for this project.Should be used along with --add")
 	rmeditor := flag.String("rmeditor", "code", "Removes editor for from the project")
 
 	flag.Parse()
@@ -60,10 +60,17 @@ func main() {
 			Label: "Available projects",
 			Items: names,
 		}
-		idx, _, err := list.Run()
+		index, _, err := list.Run()
 		helper.CheckError(err)
 
-		err = exec.Command(projects.Projects[idx].Editor, projects.Projects[idx].Path).Start()
+		editor := projects.Projects[index].Editor
+
+		if projects.Projects[index].Editor == "" {
+
+			editor = projects.CommandToOpen
+		}
+
+		err = exec.Command(editor, projects.Projects[index].Path).Start()
 		if err != nil {
 			log.Fatal(err)
 		}
