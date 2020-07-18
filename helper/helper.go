@@ -1,6 +1,6 @@
 /*
 
-Package math provides basic constants and mathematical functions.
+Package math provides basic constants and file helper functions.
 
 */
 
