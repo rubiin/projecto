@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/manifoldco/promptui"
@@ -13,6 +14,19 @@ import (
 )
 
 func main() {
+
+	templates := &promptui.PromptTemplates{
+		Prompt:  "{{ . }} ",
+		Valid:   "{{ . | green }} ",
+		Invalid: "{{ . | red }} ",
+		Success: "{{ . | bold }} ",
+	}
+
+	validate := func(input string) error {
+		_, err := regexp.Match(`[a-z]`, []byte(input))
+		return err
+	}
+
 	homeDir, err := os.UserHomeDir()
 
 	helper.CheckError(err)
@@ -48,15 +62,21 @@ func main() {
 	}
 
 	if *open {
-		projects := helper.ReadConfigFile(homeDir)
-		var names []string
-		for _, element := range projects.Projects {
-			names = append(names, element.Name)
+
+		templates := &promptui.SelectTemplates{
+			Label:    "{{ . }}?",
+			Active:   "\U0001f449{{ .Name | cyan }} ",
+			Inactive: "  {{ .Name | cyan }} ",
+			Selected: "\U0001f449{{ .Name | red | cyan }}",
 		}
 
+		projects := helper.ReadConfigFile(homeDir)
+
 		list := promptui.Select{
-			Label: "Available projects",
-			Items: names,
+			Label:     "Available projects",
+			Items:     projects.Projects,
+			Size: 8,
+			Templates: templates,
 		}
 		index, _, err := list.Run()
 		helper.CheckError(err)
@@ -97,8 +117,13 @@ func main() {
 
 			if index == 3 {
 				var cmd string
-				fmt.Println("Enter" + helper.YELLOW + " command " + helper.RESET + "that you use to open Editor from Terminal")
-				fmt.Scanf("%s", &cmd)
+				prompt := promptui.Prompt{
+					Label:     "Spicy Level",
+					Templates: templates,
+					Validate:  validate,
+				}
+				cmd, err := prompt.Run()
+				helper.CheckError(err)
 				newProject.Editor = cmd
 			} else {
 				newProject.Editor = strings.ToLower(editorsList[index])
