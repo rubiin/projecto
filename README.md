@@ -25,7 +25,7 @@ Removes the project specified from the menu
 
 `projecto --seteditor`
 Sets the global editor from the list.If other is specified, a prompt is shown which required the command for the 
-editor (Eg. atom)
+  editor (Eg. atom)
 
 `projecto --open`
 Opens a list where you can open the selected project
