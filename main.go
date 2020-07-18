@@ -33,7 +33,7 @@ func main() {
 	open := flag.Bool("open", false, "Open a project")
 	seteditor := flag.String("seteditor", "code", "Sets global editor for project.This is used for projects where editor is not set")
 	editor := flag.Bool("editor", false, "Sets an editor for this project.Should be used along with --add")
-	rmeditor := flag.String("rmeditor", "code", "Removes editor for from the project")
+	rmeditor := flag.Bool("rmeditor", false, "Removes editor for from the project")
 
 	flag.Parse()
 
@@ -46,8 +46,6 @@ func main() {
 		fmt.Println(helper.GREEN + "✅ Sucessfully updated editor" + helper.RESET)
 
 	}
-
-	_ = rmeditor
 
 	if *open {
 		projects := helper.ReadConfigFile(homeDir)
@@ -114,6 +112,27 @@ func main() {
 		helper.WriteConfigFile(configFromFile, homeDir)
 
 		fmt.Println(helper.GREEN + "✅ Sucessfully added" + helper.RESET)
+
+		return
+
+	}
+
+	if *rmeditor {
+
+		configFromFile := helper.ReadConfigFile(homeDir)
+		var names []string
+		for _, element := range configFromFile.Projects {
+			names = append(names, element.Name)
+		}
+		list := promptui.Select{
+			Label: "Available projects",
+			Items: names,
+		}
+		index, _, err := list.Run()
+		helper.CheckError(err)
+		configFromFile.Projects[index].Editor = ""
+		helper.WriteConfigFile(configFromFile, homeDir)
+		fmt.Println(helper.GREEN + "❌ Sucessfully removed for the project" + helper.RESET)
 
 		return
 
