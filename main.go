@@ -29,7 +29,7 @@ func main() {
 	}
 
 	add := flag.Bool("add", false, "Add a project")
-	remove := flag.Bool("remove", false, "Remove a project")
+	remove := flag.Bool("rm", false, "Remove a project")
 	open := flag.Bool("open", false, "Open a project")
 	seteditor := flag.String("seteditor", "code", "Sets global editor for project.This is used for projects where editor is not set")
 	editor := flag.Bool("editor", false, "Sets an editor for this project.Should be used along with --add")
