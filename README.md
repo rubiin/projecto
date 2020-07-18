@@ -1,6 +1,14 @@
+
+<img src="https://www.devteam.space/wp-content/uploads/2017/03/gopher_head-min.png"/>
+
 # Projecto
 
 Projecto opens up your project folder in your specified editors.
+
+# Installaion
+
+`go get -u https://github.com/rubiin/projecto`
+
 
 
 ## Contributing
