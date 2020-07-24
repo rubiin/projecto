@@ -27,13 +27,13 @@ func main() {
 		return err
 	}
 
-	homeDir, err := os.UserHomeDir()
+	configDir, err := os.UserConfigDir()
 
 	helper.CheckError(err)
 
-	if !helper.ConfigFileExists(homeDir + "/projecto.json") {
+	if !helper.ConfigFileExists(configDir + "/projecto.json") {
 
-		file, err := os.Create(homeDir + "/projecto.json")
+		file, err := os.Create(configDir + "/projecto.json")
 		helper.CheckError(err)
 		file.WriteString(`{
 				"commandToOpen": "code",
@@ -52,10 +52,10 @@ func main() {
 	flag.Parse()
 
 	if helper.IsFlagPassed("seteditor") {
-		projects := helper.ReadConfigFile(homeDir)
+		projects := helper.ReadConfigFile(configDir)
 		projects.CommandToOpen = *seteditor
 
-		helper.WriteConfigFile(projects, homeDir)
+		helper.WriteConfigFile(projects, configDir)
 
 		fmt.Println(helper.GREEN + "✅ Sucessfully updated editor" + helper.RESET)
 
@@ -70,12 +70,12 @@ func main() {
 			Selected: "\U0001f449{{ .Name | red | cyan }}",
 		}
 
-		projects := helper.ReadConfigFile(homeDir)
+		projects := helper.ReadConfigFile(configDir)
 
 		list := promptui.Select{
 			Label:     "Available projects",
 			Items:     projects.Projects,
-			Size: 8,
+			Size:      8,
 			Templates: templates,
 		}
 		index, _, err := list.Run()
@@ -98,7 +98,7 @@ func main() {
 
 	if *add {
 
-		configFromFile := helper.ReadConfigFile(homeDir)
+		configFromFile := helper.ReadConfigFile(configDir)
 
 		newProject := helper.Project{
 			Path: helper.CurrentDir()[0],
@@ -134,7 +134,7 @@ func main() {
 
 		configFromFile.Projects = append(configFromFile.Projects, newProject)
 
-		helper.WriteConfigFile(configFromFile, homeDir)
+		helper.WriteConfigFile(configFromFile, configDir)
 
 		fmt.Println(helper.GREEN + "✅ Sucessfully added" + helper.RESET)
 
@@ -144,7 +144,7 @@ func main() {
 
 	if *rmeditor {
 
-		configFromFile := helper.ReadConfigFile(homeDir)
+		configFromFile := helper.ReadConfigFile(configDir)
 		var names []string
 		for _, element := range configFromFile.Projects {
 			names = append(names, element.Name)
@@ -156,7 +156,7 @@ func main() {
 		index, _, err := list.Run()
 		helper.CheckError(err)
 		configFromFile.Projects[index].Editor = ""
-		helper.WriteConfigFile(configFromFile, homeDir)
+		helper.WriteConfigFile(configFromFile, configDir)
 		fmt.Println(helper.GREEN + "❌ Sucessfully removed for the project" + helper.RESET)
 
 		return
@@ -165,7 +165,7 @@ func main() {
 
 	if *remove {
 
-		configFromFile := helper.ReadConfigFile(homeDir)
+		configFromFile := helper.ReadConfigFile(configDir)
 
 		var names []string
 		for _, element := range configFromFile.Projects {
@@ -180,7 +180,7 @@ func main() {
 		helper.CheckError(err)
 		configFromFile.Projects = append(configFromFile.Projects[:index], configFromFile.Projects[index+1:]...)
 
-		helper.WriteConfigFile(configFromFile, homeDir)
+		helper.WriteConfigFile(configFromFile, configDir)
 		fmt.Println(helper.GREEN + "❌ Sucessfully removed" + helper.RESET)
 
 		return

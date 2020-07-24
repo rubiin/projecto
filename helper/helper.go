@@ -46,10 +46,10 @@ func IsFlagPassed(name string) bool {
 	return found
 }
 
-func ReadConfigFile(homeDir string) Projecto {
+func ReadConfigFile(configDir string) Projecto {
 	var config string
 
-	f, err := os.OpenFile(homeDir+"/projecto.json", os.O_RDONLY, 0644)
+	f, err := os.OpenFile(configDir+"/projecto.json", os.O_RDONLY, 0644)
 	CheckError(err)
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
@@ -64,11 +64,11 @@ func ReadConfigFile(homeDir string) Projecto {
 
 }
 
-func WriteConfigFile(configFromFile Projecto, homeDir string) {
+func WriteConfigFile(configFromFile Projecto, configDir string) {
 
 	bs, err := json.MarshalIndent(configFromFile, "", "\t")
 	CheckError(err)
-	f, err := os.Create(homeDir + "/projecto.json")
+	f, err := os.Create(configDir + "/projecto.json")
 	defer f.Close()
 	CheckError(err)
 
