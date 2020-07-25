@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"regexp"
@@ -48,6 +47,7 @@ func main() {
 	seteditor := flag.String("seteditor", "code", "Sets global editor for project.This is used for projects where editor is not set")
 	editor := flag.Bool("editor", false, "Sets an editor for this project.Should be used along with --add")
 	rmeditor := flag.Bool("rmeditor", false, "Removes editor for from the project")
+	edit := flag.Bool("edit", false, "Opens the config file in default editor")
 
 	flag.Parse()
 
@@ -59,6 +59,11 @@ func main() {
 
 		fmt.Println(helper.GREEN + "✅ Sucessfully updated editor" + helper.RESET)
 
+	}
+
+	if *edit {
+		helper.OpenConfigFile()
+		return
 	}
 
 	if *open {
@@ -89,9 +94,7 @@ func main() {
 		}
 
 		err = exec.Command(editor, projects.Projects[index].Path).Start()
-		if err != nil {
-			log.Fatal(err)
-		}
+		helper.CheckError(err)
 
 		return
 	}

@@ -12,6 +12,8 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -74,5 +76,28 @@ func WriteConfigFile(configFromFile Projecto, configDir string) {
 
 	_, e := f.WriteString(string(bs))
 	CheckError(e)
+
+}
+
+func OpenConfigFile() {
+
+	configDir, err := os.UserConfigDir()
+
+	CheckError(err)
+
+	switch runtime.GOOS {
+	case "windows":
+		err = exec.Command("start", configDir+"/projecto.json").Start()
+		CheckError(err)
+
+	case "linux":
+		err = exec.Command("xdg-open", configDir+"/projecto.json").Start()
+		CheckError(err)
+
+	case "darwin":
+		err = exec.Command("open", configDir+"/projecto.json").Start()
+		CheckError(err)
+
+	}
 
 }
