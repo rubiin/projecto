@@ -57,7 +57,7 @@ func main() {
 
 		helper.WriteConfigFile(projects, configDir)
 
-		fmt.Println(helper.GREEN + "✅ Sucessfully updated editor" + helper.RESET)
+		fmt.Println(helper.GREEN + "✅ Successfully updated editor" + helper.RESET)
 
 	}
 
@@ -160,7 +160,7 @@ func main() {
 		helper.CheckError(err)
 		configFromFile.Projects[index].Editor = ""
 		helper.WriteConfigFile(configFromFile, configDir)
-		fmt.Println(helper.GREEN + "❌ Sucessfully removed for the project" + helper.RESET)
+		fmt.Println(helper.GREEN + "❌ Successfully removed for the project" + helper.RESET)
 
 		return
 
@@ -184,7 +184,7 @@ func main() {
 		configFromFile.Projects = append(configFromFile.Projects[:index], configFromFile.Projects[index+1:]...)
 
 		helper.WriteConfigFile(configFromFile, configDir)
-		fmt.Println(helper.GREEN + "❌ Sucessfully removed" + helper.RESET)
+		fmt.Println(helper.GREEN + "❌ Successfully removed" + helper.RESET)
 
 		return
 

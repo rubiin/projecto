@@ -9,7 +9,7 @@ Projecto opens up your project folder in your specified editors.
 
 Make sure golang s installed on your machine. After that you can run the command to install :
 
-`go get -u https://github.com/rubiin/projecto`
+`go install https://github.com/rubiin/projecto@latest`
 
 # Usage
 
