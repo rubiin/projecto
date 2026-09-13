@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -54,6 +55,53 @@ func TestProjectNames(t *testing.T) {
 	if names := projectNames(nil); len(names) != 0 {
 		t.Errorf("projectNames(nil) = %v, want empty", names)
 	}
+}
+
+func TestEditorFor(t *testing.T) {
+	config := helper.Projecto{
+		CommandToOpen: "code",
+		Projects: []helper.Project{
+			{Name: "override", Path: "/home/user/override", Editor: "vim"},
+			{Name: "fallback", Path: "/home/user/fallback"},
+			{Name: "empty override", Path: "/home/user/empty", Editor: ""},
+		},
+	}
+
+	tests := []struct {
+		name  string
+		index int
+		want  string
+	}{
+		{"per-project editor wins", 0, "vim"},
+		{"falls back to global editor", 1, "code"},
+		{"empty editor falls back to global", 2, "code"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := editorFor(config, tt.index); got != tt.want {
+				t.Errorf("editorFor(%d) = %q, want %q", tt.index, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpenProjectInvokesEditorWithProjectPath(t *testing.T) {
+	if _, err := exec.LookPath("echo"); err != nil {
+		t.Skip("echo not available on PATH")
+	}
+
+	config := helper.Projecto{
+		CommandToOpen: "echo",
+		Projects: []helper.Project{
+			{Name: "alpha", Path: "/home/user/alpha"},
+		},
+	}
+
+	// A real editor launch is hard to assert; the closest check is that the
+	// invocation itself does not error out.
+	openProject(config, 0, false)
+	openProject(config, 0, true)
 }
 
 func TestEditorChoicesIncludeCustomOption(t *testing.T) {

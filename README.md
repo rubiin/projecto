@@ -53,6 +53,7 @@ Download the archive for your platform from the [releases page](https://github.c
 | `projecto add` | Register the current directory as a project |
 | `projecto add --editor` | Register the current directory and choose a dedicated editor for it |
 | `projecto open` | Pick a project from an interactive list and open it |
+| `projecto open --verbose` | Open a project, showing the editor command being invoked |
 | `projecto rm` | Remove a project from the registry |
 | `projecto seteditor <cmd>` | Set the global editor used for projects without their own editor (defaults to `$EDITOR`) |
 | `projecto rmeditor` | Remove the editor override from a project |

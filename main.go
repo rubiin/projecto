@@ -345,13 +345,23 @@ func selectProject(label string, projects []helper.Project) int {
 	return promptSelect(label, projectNames(projects))
 }
 
-// openProject launches the configured editor for the selected project.
-func openProject(config helper.Projecto, index int) {
-	project := config.Projects[index]
+// editorFor returns the editor command for the project at the given index:
+// the per-project editor when set, the global editor otherwise.
+func editorFor(config helper.Projecto, index int) string {
+	if editor := config.Projects[index].Editor; editor != "" {
+		return editor
+	}
+	return config.CommandToOpen
+}
 
-	editor := project.Editor
-	if editor == "" {
-		editor = config.CommandToOpen
+// openProject launches the configured editor for the selected project. When
+// verbose is true, the command being invoked is printed first.
+func openProject(config helper.Projecto, index int, verbose bool) {
+	project := config.Projects[index]
+	editor := editorFor(config, index)
+
+	if verbose {
+		fmt.Println(helper.BLUE + "→ Invoking: " + editor + " " + project.Path + helper.RESET)
 	}
 
 	if err := exec.Command(editor, project.Path).Start(); err != nil {
@@ -465,6 +475,13 @@ func newApp() *cli.Command {
 				Name:    "open",
 				Aliases: []string{"o"},
 				Usage:   "Open a project from an interactive list",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "verbose",
+						Aliases: []string{"v"},
+						Usage:   "Show the editor command being invoked",
+					},
+				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					configDir := loadConfigDir()
 					config := helper.ReadConfigFile(configDir)
@@ -479,7 +496,7 @@ func newApp() *cli.Command {
 						return nil
 					}
 
-					openProject(config, index)
+					openProject(config, index, cmd.Bool("verbose"))
 					return nil
 				},
 			},
