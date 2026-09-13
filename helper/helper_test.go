@@ -86,6 +86,86 @@ func TestCurrentDir(t *testing.T) {
 	}
 }
 
+func TestResolveDir(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd failed: %v", err)
+	}
+
+	t.Run("empty falls back to cwd", func(t *testing.T) {
+		path, name, err := ResolveDir("")
+		if err != nil {
+			t.Fatalf("ResolveDir(\"\") error: %v", err)
+		}
+		if path != wd {
+			t.Errorf("path = %q, want %q", path, wd)
+		}
+		if name != filepath.Base(wd) {
+			t.Errorf("name = %q, want %q", name, filepath.Base(wd))
+		}
+	})
+
+	dir := t.TempDir()
+
+	t.Run("absolute directory", func(t *testing.T) {
+		path, name, err := ResolveDir(dir)
+		if err != nil {
+			t.Fatalf("ResolveDir(%q) error: %v", dir, err)
+		}
+		if path != filepath.Clean(dir) {
+			t.Errorf("path = %q, want %q", path, filepath.Clean(dir))
+		}
+		if name != filepath.Base(dir) {
+			t.Errorf("name = %q, want %q", name, filepath.Base(dir))
+		}
+	})
+
+	t.Run("relative path is made absolute", func(t *testing.T) {
+		relative, err := filepath.Rel(wd, dir)
+		if err != nil {
+			t.Skipf("cannot express %q relative to %q: %v", dir, wd, err)
+		}
+
+		path, name, err := ResolveDir(relative)
+		if err != nil {
+			t.Fatalf("ResolveDir(%q) error: %v", relative, err)
+		}
+		if path != filepath.Clean(dir) {
+			t.Errorf("path = %q, want %q", path, filepath.Clean(dir))
+		}
+		if name != filepath.Base(dir) {
+			t.Errorf("name = %q, want %q", name, filepath.Base(dir))
+		}
+	})
+
+	t.Run("trailing slash is cleaned", func(t *testing.T) {
+		path, _, err := ResolveDir(dir + "/")
+		if err != nil {
+			t.Fatalf("ResolveDir error: %v", err)
+		}
+		if path != filepath.Clean(dir) {
+			t.Errorf("path = %q, want %q", path, filepath.Clean(dir))
+		}
+	})
+
+	t.Run("missing directory errors", func(t *testing.T) {
+		missing := filepath.Join(dir, "does-not-exist")
+		if _, _, err := ResolveDir(missing); err == nil {
+			t.Error("ResolveDir on a missing directory should fail")
+		}
+	})
+
+	t.Run("regular file errors", func(t *testing.T) {
+		file := filepath.Join(dir, "file.txt")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		if _, _, err := ResolveDir(file); err == nil {
+			t.Error("ResolveDir on a regular file should fail")
+		}
+	})
+}
+
 func TestUserConfigDirXDGPreference(t *testing.T) {
 	t.Run("XDG_CONFIG_HOME absolute path is honored", func(t *testing.T) {
 		dir := t.TempDir()

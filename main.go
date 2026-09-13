@@ -39,6 +39,7 @@ type listStyles struct {
 	selected          lipgloss.Style
 	prompt            lipgloss.Style
 	hint              lipgloss.Style
+	path              lipgloss.Style // path column in the picker
 	match             lipgloss.Style // matched characters in unselected rows
 	matchSelected     lipgloss.Style // matched characters in the selected row
 	matchPath         lipgloss.Style // matched characters in the path column
@@ -49,10 +50,11 @@ type listStyles struct {
 func newListStyles() listStyles {
 	return listStyles{
 		title:             lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
-		item:              lipgloss.NewStyle().PaddingLeft(2),
-		selected:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).PaddingLeft(0),
+		item:              lipgloss.NewStyle(),
+		selected:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		prompt:            lipgloss.NewStyle().Bold(true).MarginBottom(1),
 		hint:              lipgloss.NewStyle().Faint(true).MarginTop(1),
+		path:              lipgloss.NewStyle().Faint(true),
 		match:             lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		matchSelected:     lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("12")),
 		matchPath:         lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
@@ -114,15 +116,16 @@ func fuzzyMatch(pattern, s string) bool {
 // and returns the chosen position. Typing narrows the list with fuzzy
 // matching over both the choice and its display text.
 type selectModel struct {
-	label    string
-	choices  []string
-	displays []string // parallel to choices; what each row shows
-	filtered []int    // indices into choices currently shown
-	cursor   int      // position within filtered
-	input    textinput.Model
-	keys     keyMap
-	styles   listStyles
-	choiceCh chan int // display position of the accepted choice, -1 on cancel
+	label     string
+	choices   []string
+	displays  []string // parallel to choices; what each row shows
+	filtered  []int    // indices into choices currently shown
+	cursor    int      // position within filtered
+	input     textinput.Model
+	keys      keyMap
+	styles    listStyles
+	nameWidth int      // widest visible name, for aligning the path column
+	choiceCh  chan int // display position of the accepted choice, -1 on cancel
 }
 
 // newSelectModel builds a picker for the given choices. When displays is nil
@@ -165,6 +168,16 @@ func (m *selectModel) applyFilter() {
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(len(m.filtered)-1, 0)
+	}
+
+	// Pad names to the widest visible name so the path column lines up
+	// across rows.
+	m.nameWidth = 0
+	for _, index := range m.filtered {
+		name, _ := splitDisplay(m.displays[index])
+		if w := len([]rune(name)); w > m.nameWidth {
+			m.nameWidth = w
+		}
 	}
 }
 
@@ -220,17 +233,7 @@ func (m selectModel) render() string {
 		return b.String()
 	}
 
-	// Two-column layout: pad names to the widest visible name so the path
-	// column lines up.
-	nameWidth := 0
-	for _, index := range m.filtered {
-		name, _ := splitDisplay(m.displays[index])
-		if w := len([]rune(name)); w > nameWidth {
-			nameWidth = w
-		}
-	}
-
-	pathStyle := m.styles.hint
+	pathStyle := m.styles.path
 	pattern := strings.TrimSpace(m.input.Value())
 	for _, index := range m.filtered {
 		display := m.displays[index]
@@ -251,7 +254,7 @@ func (m selectModel) render() string {
 		indices, _ := fuzzyMatchIndices(pattern, display)
 		nameIdx, pathIdx := partitionMatchIndices(indices, len([]rune(name)))
 
-		padded := name + strings.Repeat(" ", nameWidth-len([]rune(name)))
+		padded := name + strings.Repeat(" ", m.nameWidth-len([]rune(name)))
 		b.WriteString(prefix)
 		b.WriteString(style.Render(highlight(padded, nameIdx, matchStyle)))
 		if path != "" {
@@ -654,13 +657,18 @@ func indexOfProjectPath(projects []helper.Project, path string) int {
 	return -1
 }
 
-// addProject registers the current directory as a new project, optionally
-// prompting for a per-project editor. Directories that are already
-// registered are skipped with a notice.
-func addProject(configDir string, withEditor bool) {
+// addProject registers the given directory as a new project, optionally
+// prompting for a per-project editor. When dir is empty the current working
+// directory is used. Directories that are already registered are skipped
+// with a notice.
+func addProject(configDir string, dir string, withEditor bool) {
 	config := helper.ReadConfigFile(configDir)
 
-	path, name := helper.CurrentDir()
+	path, name, err := helper.ResolveDir(dir)
+	if err != nil {
+		fmt.Println(helper.RED + "✗ " + err.Error() + helper.RESET)
+		return
+	}
 
 	if index := indexOfProjectPath(config.Projects, path); index >= 0 {
 		fmt.Println(helper.YELLOW + "⚠️  Already registered as '" + config.Projects[index].Name + "'" + helper.RESET)
@@ -788,9 +796,10 @@ func newApp() *cli.Command {
 		EnableShellCompletion: true,
 		Commands: []*cli.Command{
 			{
-				Name:    "add",
-				Aliases: []string{"a"},
-				Usage:   "Add the current directory as a project",
+				Name:      "add",
+				Aliases:   []string{"a"},
+				Usage:     "Add a directory as a project (defaults to the current directory)",
+				ArgsUsage: "[directory]",
 				Flags: []cli.Flag{
 					&cli.BoolFlag{
 						Name:    "editor",
@@ -799,7 +808,7 @@ func newApp() *cli.Command {
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					addProject(loadConfigDir(), cmd.Bool("editor"))
+					addProject(loadConfigDir(), cmd.Args().First(), cmd.Bool("editor"))
 					return nil
 				},
 			},

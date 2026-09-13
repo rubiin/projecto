@@ -152,6 +152,31 @@ func CurrentDir() (string, string) {
 	return path, DirName(path)
 }
 
+// ResolveDir resolves the directory to register: dir when given (relative
+// paths are made absolute, and the target must exist and be a directory),
+// otherwise the current working directory. It returns the absolute path and
+// its name.
+func ResolveDir(dir string) (string, string, error) {
+	if dir == "" {
+		path, name := CurrentDir()
+		return path, name, nil
+	}
+
+	path, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", err
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", "", err
+	}
+	if !info.IsDir() {
+		return "", "", fmt.Errorf("%s is not a directory", dir)
+	}
+	return path, DirName(path), nil
+}
+
 // CheckError terminates the program with the error message if e is not nil.
 func CheckError(e error) {
 	if e != nil {

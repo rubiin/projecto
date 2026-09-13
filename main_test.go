@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -348,7 +349,7 @@ func TestAddProjectRejectsDuplicate(t *testing.T) {
 	configDir := t.TempDir()
 	helper.WriteConfigFile(helper.Projecto{CommandToOpen: "echo"}, configDir)
 
-	addProject(configDir, false)
+	addProject(configDir, "", false)
 	config := helper.ReadConfigFile(configDir)
 	if len(config.Projects) != 1 {
 		t.Fatalf("after first add, want 1 project, got %d", len(config.Projects))
@@ -356,10 +357,60 @@ func TestAddProjectRejectsDuplicate(t *testing.T) {
 
 	// The test binary's working directory is already registered by the first
 	// call, so a second add must be a no-op.
-	addProject(configDir, false)
+	addProject(configDir, "", false)
 	config = helper.ReadConfigFile(configDir)
 	if len(config.Projects) != 1 {
 		t.Errorf("duplicate add created %d projects, want 1", len(config.Projects))
+	}
+}
+
+func TestAddProjectWithDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	helper.WriteConfigFile(helper.Projecto{CommandToOpen: "echo"}, configDir)
+
+	target := t.TempDir()
+
+	addProject(configDir, target, false)
+
+	config := helper.ReadConfigFile(configDir)
+	if len(config.Projects) != 1 {
+		t.Fatalf("add with explicit dir registered %d projects, want 1", len(config.Projects))
+	}
+	if config.Projects[0].Path != filepath.Clean(target) {
+		t.Errorf("registered path = %q, want %q", config.Projects[0].Path, filepath.Clean(target))
+	}
+	if config.Projects[0].Name != filepath.Base(target) {
+		t.Errorf("registered name = %q, want %q", config.Projects[0].Name, filepath.Base(target))
+	}
+
+	// Re-adding the same directory must be a no-op.
+	addProject(configDir, target+"/", false)
+	config = helper.ReadConfigFile(configDir)
+	if len(config.Projects) != 1 {
+		t.Errorf("re-adding the same directory created %d projects, want 1", len(config.Projects))
+	}
+}
+
+func TestAddProjectRejectsInvalidDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	helper.WriteConfigFile(helper.Projecto{CommandToOpen: "echo"}, configDir)
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	addProject(configDir, missing, false)
+
+	if config := helper.ReadConfigFile(configDir); len(config.Projects) != 0 {
+		t.Errorf("invalid dir registered %d projects, want 0", len(config.Projects))
+	}
+
+	// A regular file is not a directory either.
+	file := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	addProject(configDir, file, false)
+
+	if config := helper.ReadConfigFile(configDir); len(config.Projects) != 0 {
+		t.Errorf("file path registered %d projects, want 0", len(config.Projects))
 	}
 }
 

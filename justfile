@@ -5,7 +5,7 @@ default:
 build:
     #!/usr/bin/env sh
     VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-    go build -ldflags "-s -w -X main.version=${VERSION}" -o projecto .
+    CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o projecto .
 
 # Run all tests
 test:

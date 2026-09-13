@@ -55,8 +55,8 @@ Download the archive for your platform from the [releases page](https://github.c
 
 | Command | Description |
 | --- | --- |
-| `projecto add` | Register the current directory as a project |
-| `projecto add --editor` | Register the current directory and choose a dedicated editor for it |
+| `projecto add [dir]` | Register a directory as a project (defaults to the current directory) |
+| `projecto add [dir] --editor` | Register a directory and choose a dedicated editor for it |
 | `projecto` | Pick a project from an interactive list and open it (default) |
 | `projecto open` | Same as above — the picker is the default command |
 | `projecto open --verbose` | Open a project, showing the editor command being invoked |
