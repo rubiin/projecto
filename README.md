@@ -1,9 +1,13 @@
+
 # Projecto
 
 [![CI](https://github.com/rubiin/projecto/actions/workflows/ci.yml/badge.svg)](https://github.com/rubiin/projecto/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/rubiin/projecto.svg)](https://pkg.go.dev/github.com/rubiin/projecto)
 [![Release](https://img.shields.io/github/v/release/rubiin/projecto)](https://github.com/rubiin/projecto/releases/latest)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+
+
+<img width="200" alt="projecto" src="https://github.com/user-attachments/assets/b11863e8-d24a-4d14-930c-bdc7e4348b96" />
 
 Projecto is a small CLI tool that launches your project folders directly in your editor of choice. Instead of opening a terminal, navigating to the project, and typing an editor command, Projecto keeps an interactive registry of your projects and opens the selected one in a single command.
 
