@@ -174,6 +174,33 @@ func TestProjectEditorOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestShortenHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("home directory unavailable")
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"inside home", filepath.Join(home, "work", "api"), "~/work/api"},
+		{"home itself", home, "~"},
+		{"trailing separator", home + string(filepath.Separator), "~/"},
+		{"outside home", "/opt/something", "/opt/something"},
+		{"prefix but sibling dir", filepath.Join(home+"x", "api"), filepath.Join(home+"x", "api")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ShortenHome(tt.path); got != tt.want {
+				t.Errorf("ShortenHome(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfigPath(t *testing.T) {
 	path, err := ConfigPath()
 	if err != nil {

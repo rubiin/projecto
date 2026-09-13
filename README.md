@@ -9,7 +9,8 @@ Projecto is a small CLI tool that launches your project folders directly in your
 
 ## Features
 
-- **Interactive picker** — clean keyboard-driven project list built with [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+- **Interactive picker** — clean keyboard-driven project list built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), with fuzzy filtering and name/path columns
+- **Recently-used ordering** — the projects you open most often float to the top of the picker
 - **Per-project editors** — assign a dedicated editor to any project, with a global fallback for the rest
 - **Cross-platform** — single static binary for Linux, macOS, and Windows
 - **Simple config** — human-readable JSON you can edit directly with `projecto edit`
@@ -52,7 +53,8 @@ Download the archive for your platform from the [releases page](https://github.c
 | --- | --- |
 | `projecto add` | Register the current directory as a project |
 | `projecto add --editor` | Register the current directory and choose a dedicated editor for it |
-| `projecto open` | Pick a project from an interactive list and open it |
+| `projecto` | Pick a project from an interactive list and open it (default) |
+| `projecto open` | Same as above — the picker is the default command |
 | `projecto open --verbose` | Open a project, showing the editor command being invoked |
 | `projecto rm` | Remove a project from the registry |
 | `projecto seteditor <cmd>` | Set the global editor used for projects without their own editor (defaults to `$EDITOR`) |

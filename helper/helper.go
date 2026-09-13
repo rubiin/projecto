@@ -127,6 +127,23 @@ func DirName(path string) string {
 	return filepath.Base(filepath.Clean(path))
 }
 
+// ShortenHome abbreviates the user's home directory prefix to "~" so paths
+// read as "~/work/api-server". Paths outside the home directory are
+// returned unchanged.
+func ShortenHome(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if prefix := home + string(filepath.Separator); strings.HasPrefix(path, prefix) {
+		return "~" + path[len(home):]
+	}
+	return path
+}
+
 // CurrentDir returns the current working directory and its name. It calls
 // log.Fatalln on failure, terminating the program.
 func CurrentDir() (string, string) {

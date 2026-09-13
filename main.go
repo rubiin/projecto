@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
@@ -32,21 +34,29 @@ var editorPresets = []struct {
 
 // listStyles holds the lipgloss styles shared by all pickers.
 type listStyles struct {
-	title    lipgloss.Style
-	item     lipgloss.Style
-	selected lipgloss.Style
-	prompt   lipgloss.Style
-	hint     lipgloss.Style
+	title             lipgloss.Style
+	item              lipgloss.Style
+	selected          lipgloss.Style
+	prompt            lipgloss.Style
+	hint              lipgloss.Style
+	match             lipgloss.Style // matched characters in unselected rows
+	matchSelected     lipgloss.Style // matched characters in the selected row
+	matchPath         lipgloss.Style // matched characters in the path column
+	matchPathSelected lipgloss.Style // path-column matches in the selected row
 }
 
 // newListStyles returns the picker styles.
 func newListStyles() listStyles {
 	return listStyles{
-		title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
-		item:     lipgloss.NewStyle().PaddingLeft(2),
-		selected: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).PaddingLeft(0),
-		prompt:   lipgloss.NewStyle().Bold(true).MarginBottom(1),
-		hint:     lipgloss.NewStyle().Faint(true).MarginTop(1),
+		title:             lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
+		item:              lipgloss.NewStyle().PaddingLeft(2),
+		selected:          lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).PaddingLeft(0),
+		prompt:            lipgloss.NewStyle().Bold(true).MarginBottom(1),
+		hint:              lipgloss.NewStyle().Faint(true).MarginTop(1),
+		match:             lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
+		matchSelected:     lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("12")),
+		matchPath:         lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
+		matchPathSelected: lipgloss.NewStyle().Bold(true).Underline(true).Foreground(lipgloss.Color("6")),
 	}
 }
 
@@ -62,8 +72,8 @@ type keyMap struct {
 
 func newKeyMap() keyMap {
 	return keyMap{
-		up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		up:       key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
+		down:     key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
 		accept:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 		cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "cancel")),
 		tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next editor")),
@@ -71,47 +81,125 @@ func newKeyMap() keyMap {
 	}
 }
 
-// selectModel is a Bubble Tea model that shows a list of strings and returns
-// the chosen index.
+// fuzzyMatchIndices reports whether pattern matches s as a case-insensitive
+// subsequence and, when it does, returns the rune indices of s at which the
+// pattern characters matched so callers can highlight them.
+func fuzzyMatchIndices(pattern, s string) ([]int, bool) {
+	pRunes := []rune(strings.ToLower(pattern))
+	sRunes := []rune(strings.ToLower(s))
+
+	var indices []int
+	i := 0
+	for j, r := range sRunes {
+		if i < len(pRunes) && pRunes[i] == r {
+			indices = append(indices, j)
+			i++
+		}
+	}
+	if i != len(pRunes) {
+		return nil, false
+	}
+	return indices, true
+}
+
+// fuzzyMatch reports whether pattern matches s as a case-insensitive
+// subsequence: every rune of pattern appears in s in order, e.g. "prj"
+// matches "My Project".
+func fuzzyMatch(pattern, s string) bool {
+	_, matched := fuzzyMatchIndices(pattern, s)
+	return matched
+}
+
+// selectModel is a Bubble Tea model that shows a filterable list of strings
+// and returns the chosen position. Typing narrows the list with fuzzy
+// matching over both the choice and its display text.
 type selectModel struct {
 	label    string
 	choices  []string
-	cursor   int
+	displays []string // parallel to choices; what each row shows
+	filtered []int    // indices into choices currently shown
+	cursor   int      // position within filtered
+	input    textinput.Model
 	keys     keyMap
 	styles   listStyles
-	choiceCh chan string
+	choiceCh chan int // display position of the accepted choice, -1 on cancel
 }
 
-// newSelectModel builds a picker for the given choices.
-func newSelectModel(label string, choices []string) selectModel {
-	return selectModel{
+// newSelectModel builds a picker for the given choices. When displays is nil
+// the choices themselves are shown.
+func newSelectModel(label string, choices, displays []string) selectModel {
+	if displays == nil {
+		displays = choices
+	}
+
+	ti := textinput.New()
+	ti.Placeholder = "Filter…"
+	ti.Prompt = "> "
+	ti.Focus()
+	ti.CharLimit = 100
+	ti.SetWidth(40)
+
+	m := selectModel{
 		label:    label,
 		choices:  choices,
+		displays: displays,
+		input:    ti,
 		keys:     newKeyMap(),
 		styles:   newListStyles(),
-		choiceCh: make(chan string, 1),
+		choiceCh: make(chan int, 1),
+	}
+	m.applyFilter()
+	return m
+}
+
+// applyFilter recomputes the visible choices from the current input value
+// and clamps the cursor to the new range. Filtering matches the choice text
+// and its display text.
+func (m *selectModel) applyFilter() {
+	m.filtered = m.filtered[:0]
+	pattern := strings.TrimSpace(m.input.Value())
+	for i, choice := range m.choices {
+		if pattern == "" || fuzzyMatch(pattern, choice) || fuzzyMatch(pattern, m.displays[i]) {
+			m.filtered = append(m.filtered, i)
+		}
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(len(m.filtered)-1, 0)
 	}
 }
 
-func (m selectModel) Init() tea.Cmd { return nil }
+func (m selectModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.cancel):
-			m.choiceCh <- ""
+			m.choiceCh <- -1
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.accept):
-			m.choiceCh <- m.choices[m.cursor]
-			return m, tea.Quit
+			if len(m.filtered) > 0 {
+				m.choiceCh <- m.cursor
+				return m, tea.Quit
+			}
+			return m, nil // no matches: ignore enter
 		case key.Matches(msg, m.keys.up):
-			m.cursor = (m.cursor - 1 + len(m.choices)) % len(m.choices)
+			if len(m.filtered) > 0 {
+				m.cursor = (m.cursor - 1 + len(m.filtered)) % len(m.filtered)
+			}
+			return m, nil
 		case key.Matches(msg, m.keys.down):
-			m.cursor = (m.cursor + 1) % len(m.choices)
+			if len(m.filtered) > 0 {
+				m.cursor = (m.cursor + 1) % len(m.filtered)
+			}
+			return m, nil
 		}
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.applyFilter()
+	return m, cmd
 }
 
 func (m selectModel) View() tea.View {
@@ -123,20 +211,117 @@ func (m selectModel) render() string {
 
 	b.WriteString(m.styles.prompt.Render(m.label))
 	b.WriteString("\n")
+	b.WriteString(m.input.View())
+	b.WriteString("\n")
 
-	for i, choice := range m.choices {
-		style := m.styles.item
-		if i == m.cursor {
-			style = m.styles.selected
-			b.WriteString("❯ ")
-		} else {
-			b.WriteString("  ")
+	if len(m.filtered) == 0 {
+		b.WriteString(m.styles.hint.Render("no matches"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Two-column layout: pad names to the widest visible name so the path
+	// column lines up.
+	nameWidth := 0
+	for _, index := range m.filtered {
+		name, _ := splitDisplay(m.displays[index])
+		if w := len([]rune(name)); w > nameWidth {
+			nameWidth = w
 		}
-		b.WriteString(style.Render(choice))
+	}
+
+	pathStyle := m.styles.hint
+	pattern := strings.TrimSpace(m.input.Value())
+	for _, index := range m.filtered {
+		display := m.displays[index]
+		name, path := splitDisplay(display)
+		style := m.styles.item
+		matchStyle := m.styles.match
+		pathMatchStyle := m.styles.matchPath
+		prefix := "  "
+		if index == m.filtered[m.cursor] {
+			style = m.styles.selected
+			matchStyle = m.styles.matchSelected
+			pathMatchStyle = m.styles.matchPathSelected
+			prefix = "❯ "
+		}
+
+		// Highlight the characters matched by the filter, both in the name
+		// and in the path column.
+		indices, _ := fuzzyMatchIndices(pattern, display)
+		nameIdx, pathIdx := partitionMatchIndices(indices, len([]rune(name)))
+
+		padded := name + strings.Repeat(" ", nameWidth-len([]rune(name)))
+		b.WriteString(prefix)
+		b.WriteString(style.Render(highlight(padded, nameIdx, matchStyle)))
+		if path != "" {
+			b.WriteString("  ")
+			b.WriteString(pathStyle.Render(highlight(path, pathIdx, pathMatchStyle)))
+		}
 		b.WriteString("\n")
 	}
 
-	b.WriteString(m.styles.hint.Render("(↑/↓ to move, enter to select, esc to cancel)"))
+	b.WriteString(m.styles.hint.Render("(type to filter, ↑/↓ to move, enter to select, esc to cancel)"))
+	return b.String()
+}
+
+// splitDisplay splits a display string of the form "name<sep>path" at the
+// two-space separator used by the two-column layout, returning the name and
+// the path (possibly empty).
+func splitDisplay(display string) (string, string) {
+	if name, path, found := strings.Cut(display, "  "); found && name != "" {
+		return name, path
+	}
+	return display, ""
+}
+
+// partitionMatchIndices splits display-relative match indices into
+// name-relative and path-relative indices. The display has the form
+// name + two-space separator + path; positions inside the separator are
+// dropped.
+func partitionMatchIndices(indices []int, nameLen int) (nameIdx, pathIdx []int) {
+	pathOffset := nameLen + 2
+	for _, i := range indices {
+		switch {
+		case i < nameLen:
+			nameIdx = append(nameIdx, i)
+		case i >= pathOffset:
+			pathIdx = append(pathIdx, i-pathOffset)
+		}
+	}
+	return nameIdx, pathIdx
+}
+
+// highlight wraps the runes at the given indices in s with the given style,
+// grouping adjacent runes into single styled runs. Without indices or with
+// a plain style, s is returned unchanged.
+func highlight(s string, indices []int, style lipgloss.Style) string {
+	if len(indices) == 0 {
+		return s
+	}
+
+	runes := []rune(s)
+	matched := make(map[int]bool, len(indices))
+	for _, i := range indices {
+		if i >= 0 && i < len(runes) {
+			matched[i] = true
+		}
+	}
+
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		j := i
+		for j < len(runes) && matched[j] == matched[i] {
+			j++
+		}
+		seg := string(runes[i:j])
+		if matched[i] {
+			b.WriteString(style.Render(seg))
+		} else {
+			b.WriteString(seg)
+		}
+		i = j
+	}
 	return b.String()
 }
 
@@ -227,10 +412,11 @@ func (m editorModel) render() string {
 	return b.String()
 }
 
-// promptSelect shows a picker in the terminal and returns the chosen index,
-// or -1 if the user cancelled.
-func promptSelect(label string, choices []string) int {
-	model := newSelectModel(label, choices)
+// promptSelect shows a picker in the terminal and returns the index of the
+// chosen entry in choices, or -1 if the user cancelled. When displays is nil
+// the choices themselves are shown; otherwise it must be parallel to choices.
+func promptSelect(label string, choices, displays []string) int {
+	model := newSelectModel(label, choices, displays)
 	p := tea.NewProgram(model)
 
 	final, err := p.Run()
@@ -238,15 +424,13 @@ func promptSelect(label string, choices []string) int {
 		helper.CheckError(err)
 	}
 
-	choice := final.(selectModel).choiceCh
 	select {
-	case c := <-choice:
-		for i, candidate := range choices {
-			if candidate == c {
-				return i
-			}
+	case pos := <-final.(selectModel).choiceCh:
+		chosen := final.(selectModel)
+		if pos < 0 || pos >= len(chosen.filtered) {
+			return -1
 		}
-		return -1
+		return chosen.filtered[pos]
 	default:
 		// The program ended without a choice (e.g. ctrl+c was mapped to quit
 		// directly). Treat it as a cancellation.
@@ -314,7 +498,7 @@ func chooseEditor() (string, bool) {
 		choices[i] = preset.name
 	}
 
-	index := promptSelect("Select an editor for this project", choices)
+	index := promptSelect("Select an editor for this project", choices, nil)
 	if index < 0 {
 		return "", false
 	}
@@ -339,10 +523,77 @@ func projectNames(projects []helper.Project) []string {
 	return names
 }
 
-// selectProject shows an interactive list of project names and returns the
-// chosen index, or -1 if the user cancelled.
+// recentOrder returns the indices of projects sorted most-recently-used
+// first. Projects never opened (empty LastOpened) keep their registration
+// order and come last, among themselves.
+func recentOrder(projects []helper.Project) []int {
+	indices := make([]int, len(projects))
+	for i := range indices {
+		indices[i] = i
+	}
+
+	sort.SliceStable(indices, func(a, b int) bool {
+		// a and b are positions within indices, so the projects being
+		// compared live at indices[a] and indices[b].
+		pa, pb := projects[indices[a]], projects[indices[b]]
+		ta, taErr := parseTimestamp(pa.LastOpened)
+		tb, tbErr := parseTimestamp(pb.LastOpened)
+		switch {
+		case taErr == nil && tbErr == nil:
+			return ta.After(tb)
+		case taErr == nil:
+			return true
+		case tbErr == nil:
+			return false
+		default:
+			return false // keep registration order
+		}
+	})
+	return indices
+}
+
+// parseTimestamp parses a stored lastOpened value in RFC3339 format.
+func parseTimestamp(value string) (time.Time, error) {
+	return time.Parse(time.RFC3339, value)
+}
+
+// touchProject stamps the project at the given index as just opened and
+// persists the configuration.
+func touchProject(configDir string, config helper.Projecto, index int) {
+	config.Projects[index].LastOpened = time.Now().UTC().Format(time.RFC3339)
+	helper.WriteConfigFile(config, configDir)
+}
+
+// selectProject shows an interactive list of projects (name and path
+// columns, registration order) and returns the chosen index, or -1 if the
+// user cancelled.
 func selectProject(label string, projects []helper.Project) int {
-	return promptSelect(label, projectNames(projects))
+	names := projectNames(projects)
+	displays := make([]string, len(projects))
+	for i, project := range projects {
+		displays[i] = names[i] + "  " + helper.ShortenHome(project.Path)
+	}
+	return promptSelect(label, names, displays)
+}
+
+// selectProjectDetailed shows the interactive picker with a name column and
+// a home-abbreviated path column, ordered most-recently-used first. It
+// returns the index into projects, or -1 if the user cancelled.
+func selectProjectDetailed(label string, projects []helper.Project) int {
+	order := recentOrder(projects)
+	names := projectNames(projects)
+	choices := make([]string, len(order))
+	displays := make([]string, len(order))
+	for pos, index := range order {
+		choices[pos] = names[index]
+		displays[pos] = names[index] + "  " + helper.ShortenHome(projects[index].Path)
+	}
+
+	pos := promptSelect(label, choices, displays)
+	if pos < 0 {
+		return -1
+	}
+	return order[pos]
 }
 
 // editorFor returns the editor command for the project at the given index:
@@ -370,9 +621,52 @@ func openProject(config helper.Projecto, index int, verbose bool) {
 	fmt.Println(helper.GREEN + "✅ Opened " + project.Name + helper.RESET)
 }
 
+// openProjectFlow runs the full open flow: shows the picker ordered
+// most-recently-used first and launches the chosen project.
+func openProjectFlow(configDir string, verbose bool) {
+	config := helper.ReadConfigFile(configDir)
+
+	if len(config.Projects) == 0 {
+		fmt.Println(helper.YELLOW + "No projects registered; add one with 'projecto add'" + helper.RESET)
+		return
+	}
+
+	index := selectProjectDetailed("Available projects", config.Projects)
+	if index < 0 {
+		fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
+		return
+	}
+
+	openProject(config, index, verbose)
+	touchProject(configDir, config, index)
+}
+
+// indexOfProjectPath returns the index of the first project registered with
+// the given path, or -1 if none is. Both sides are cleaned so that cosmetic
+// differences (e.g. a trailing slash) do not create duplicates.
+func indexOfProjectPath(projects []helper.Project, path string) int {
+	path = filepath.Clean(path)
+	for i, project := range projects {
+		if filepath.Clean(project.Path) == path {
+			return i
+		}
+	}
+	return -1
+}
+
 // addProject registers the current directory as a new project, optionally
-// prompting for a per-project editor.
+// prompting for a per-project editor. Directories that are already
+// registered are skipped with a notice.
 func addProject(configDir string, withEditor bool) {
+	config := helper.ReadConfigFile(configDir)
+
+	path, name := helper.CurrentDir()
+
+	if index := indexOfProjectPath(config.Projects, path); index >= 0 {
+		fmt.Println(helper.YELLOW + "⚠️  Already registered as '" + config.Projects[index].Name + "'" + helper.RESET)
+		return
+	}
+
 	var editor string
 
 	if withEditor {
@@ -383,10 +677,6 @@ func addProject(configDir string, withEditor bool) {
 		}
 		editor = chosen
 	}
-
-	config := helper.ReadConfigFile(configDir)
-
-	path, name := helper.CurrentDir()
 
 	newProject := helper.Project{
 		Path: path,
@@ -400,6 +690,48 @@ func addProject(configDir string, withEditor bool) {
 	helper.WriteConfigFile(config, configDir)
 
 	fmt.Println(helper.GREEN + "✅ Successfully added" + helper.RESET)
+}
+
+// listProjects prints a non-interactive table of registered projects with
+// their configured editors. Projects without their own editor show
+// "(global)", meaning the fallback editor applies.
+func listProjects(config helper.Projecto) {
+	if len(config.Projects) == 0 {
+		fmt.Println(helper.YELLOW + "No projects registered" + helper.RESET)
+		return
+	}
+
+	// Determine column widths so the output is aligned regardless of name
+	// and editor lengths.
+	nameWidth := len("NAME")
+	pathWidth := len("PATH")
+	editorWidth := len("EDITOR")
+	for _, project := range config.Projects {
+		if w := len(project.Name); w > nameWidth {
+			nameWidth = w
+		}
+		if w := len(project.Path); w > pathWidth {
+			pathWidth = w
+		}
+		editor := project.Editor
+		if editor == "" {
+			editor = "(global)"
+		}
+		if w := len(editor); w > editorWidth {
+			editorWidth = w
+		}
+	}
+
+	header := fmt.Sprintf("%-*s  %-*s  %-*s", nameWidth, "NAME", pathWidth, "PATH", editorWidth, "EDITOR")
+	fmt.Println(helper.BLUE + header + helper.RESET)
+
+	for _, project := range config.Projects {
+		editor := project.Editor
+		if editor == "" {
+			editor = "(global)"
+		}
+		fmt.Printf("%-*s  %-*s  %-*s\n", nameWidth, project.Name, pathWidth, project.Path, editorWidth, editor)
+	}
 }
 
 // removeProject deletes the selected project from the configuration.
@@ -483,20 +815,16 @@ func newApp() *cli.Command {
 					},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
-					configDir := loadConfigDir()
-					config := helper.ReadConfigFile(configDir)
-
-					if len(config.Projects) == 0 {
-						return fmt.Errorf("no projects registered; add one with 'projecto add'")
-					}
-
-					index := promptSelect("Available projects", projectNames(config.Projects))
-					if index < 0 {
-						fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
-						return nil
-					}
-
-					openProject(config, index, cmd.Bool("verbose"))
+					openProjectFlow(loadConfigDir(), cmd.Bool("verbose"))
+					return nil
+				},
+			},
+			{
+				Name:    "list",
+				Aliases: []string{"ls"},
+				Usage:   "List registered projects without opening one",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					listProjects(helper.ReadConfigFile(loadConfigDir()))
 					return nil
 				},
 			},
@@ -546,7 +874,13 @@ func newApp() *cli.Command {
 var version = "dev"
 
 func main() {
-	if err := newApp().Run(context.Background(), os.Args); err != nil {
+	args := os.Args[1:]
+	// Bare `projecto` (no subcommand) opens the picker directly.
+	if len(args) == 0 {
+		args = []string{"open"}
+	}
+
+	if err := newApp().Run(context.Background(), append([]string{os.Args[0]}, args...)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
