@@ -2,7 +2,6 @@ package helper
 
 import (
 	"encoding/json"
-	"flag"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,35 +86,48 @@ func TestCurrentDir(t *testing.T) {
 	}
 }
 
-func TestIsFlagPassed(t *testing.T) {
-	old := flag.CommandLine
-	defer func() { flag.CommandLine = old }()
+func TestUserConfigDirXDGPreference(t *testing.T) {
+	t.Run("XDG_CONFIG_HOME absolute path is honored", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("XDG_CONFIG_HOME", dir)
 
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	flag.Bool("add", false, "test flag")
-	flag.String("editor", "", "test flag")
+		got, err := userConfigDir()
+		if err != nil {
+			t.Fatalf("userConfigDir() error: %v", err)
+		}
+		if got != filepath.Clean(dir) {
+			t.Errorf("userConfigDir() = %q, want %q", got, filepath.Clean(dir))
+		}
+	})
 
-	if err := flag.CommandLine.Parse([]string{"--add"}); err != nil {
-		t.Fatalf("flag parse failed: %v", err)
-	}
+	t.Run("XDG_CONFIG_HOME relative path is rejected", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "relative/path")
 
-	tests := []struct {
-		name string
-		flag string
-		want bool
-	}{
-		{"passed flag", "add", true},
-		{"declared but not passed", "editor", false},
-		{"undeclared flag", "nope", false},
-	}
+		if _, err := userConfigDir(); err == nil {
+			t.Error("userConfigDir() with relative XDG_CONFIG_HOME should fail")
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsFlagPassed(tt.flag); got != tt.want {
-				t.Errorf("IsFlagPassed(%q) = %v, want %v", tt.flag, got, tt.want)
+	t.Run("falls back to os.UserConfigDir when unset", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "")
+
+		want, wantErr := os.UserConfigDir()
+		got, err := userConfigDir()
+
+		if wantErr != nil {
+			// os.UserConfigDir fails when HOME is unset; mirror that.
+			if err == nil {
+				t.Error("userConfigDir() should fail when os.UserConfigDir fails")
 			}
-		})
-	}
+			return
+		}
+		if err != nil {
+			t.Fatalf("userConfigDir() error: %v", err)
+		}
+		if got != want {
+			t.Errorf("userConfigDir() = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestConfigRoundTrip(t *testing.T) {
@@ -171,4 +183,73 @@ func TestConfigPath(t *testing.T) {
 	if filepath.Base(path) != configFileName {
 		t.Errorf("ConfigPath() = %q, want file name %q", path, configFileName)
 	}
+	if filepath.Base(filepath.Dir(path)) != appName {
+		t.Errorf("ConfigPath() = %q, want parent directory %q", path, appName)
+	}
+}
+
+func TestMigrateLegacyConfig(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+
+	legacy := filepath.Join(base, configFileName)
+	current := filepath.Join(base, appName, configFileName)
+
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir failed: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+
+	t.Run("moves legacy file into projecto subdirectory", func(t *testing.T) {
+		write(legacy, "{\"commandToOpen\":\"vim\"}")
+
+		done, err := MigrateLegacyConfig()
+		if err != nil {
+			t.Fatalf("MigrateLegacyConfig() error: %v", err)
+		}
+		if !done {
+			t.Fatal("migration should have been performed")
+		}
+		if !ConfigFileExists(current) {
+			t.Error("config file should exist at the new location")
+		}
+		if ConfigFileExists(legacy) {
+			t.Error("legacy config file should have been removed")
+		}
+	})
+
+	t.Run("no-op when there is no legacy file", func(t *testing.T) {
+		if err := os.Remove(current); err != nil {
+			t.Fatalf("cleanup failed: %v", err)
+		}
+
+		done, err := MigrateLegacyConfig()
+		if err != nil {
+			t.Fatalf("MigrateLegacyConfig() error: %v", err)
+		}
+		if done {
+			t.Error("migration should not have been performed")
+		}
+	})
+
+	t.Run("no-op when the new location already exists", func(t *testing.T) {
+		write(legacy, "{\"commandToOpen\":\"code\"}")
+		write(current, "{\"commandToOpen\":\"vim\"}")
+
+		done, err := MigrateLegacyConfig()
+		if err != nil {
+			t.Fatalf("MigrateLegacyConfig() error: %v", err)
+		}
+		if done {
+			t.Error("migration should not overwrite the existing config")
+		}
+		if got := ReadConfigFile(filepath.Join(base, appName)); got.CommandToOpen != "vim" {
+			t.Errorf("existing config was overwritten: commandToOpen = %q", got.CommandToOpen)
+		}
+	})
 }

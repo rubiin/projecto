@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,42 +8,35 @@ import (
 	"github.com/rubiin/projecto/helper"
 )
 
-func TestConfigTemplateIsValidJSON(t *testing.T) {
-	var config struct {
-		CommandToOpen string   `json:"commandToOpen"`
-		Projects      []string `json:"projects"`
-	}
-	if err := json.Unmarshal([]byte(configTemplate), &config); err != nil {
-		t.Errorf("configTemplate is not valid JSON: %v", err)
-	}
-	if config.CommandToOpen != "code" {
-		t.Errorf("configTemplate default editor = %q, want %q", config.CommandToOpen, "code")
-	}
-	if config.Projects == nil || len(config.Projects) != 0 {
-		t.Error("configTemplate projects should be an empty list")
-	}
-}
-
-func TestValidateCustomEditor(t *testing.T) {
+func TestDefaultEditor(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		wantErr bool
+		name string
+		env  string
+		want string
 	}{
-		{"simple command", "code", false},
-		{"command with args", "code --wait", false},
-		{"empty input", "", true},
-		{"whitespace only", "   ", true},
-		{"tab only", "\t", true},
+		{"unset falls back to code", "", "code"},
+		{"simple command", "vim", "vim"},
+		{"command with args", "code --wait", "code"},
+		{"whitespace is trimmed", "  helix  ", "helix"},
+		{"absolute path", "/usr/bin/nvim", "nvim"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateCustomEditor(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateCustomEditor(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			t.Setenv("EDITOR", tt.env)
+			if got := helper.DefaultEditor(); got != tt.want {
+				t.Errorf("DefaultEditor() with EDITOR=%q = %q, want %q", tt.env, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestEditorPresetsHaveCommands(t *testing.T) {
+	for i, preset := range editorPresets {
+		isLast := i == len(editorPresets)-1
+		if preset.command == "" && !isLast {
+			t.Errorf("editor preset %q has an empty command", preset.name)
+		}
 	}
 }
 
@@ -65,8 +57,16 @@ func TestProjectNames(t *testing.T) {
 }
 
 func TestEditorChoicesIncludeCustomOption(t *testing.T) {
-	last := editorChoices[len(editorChoices)-1]
-	if !strings.EqualFold(last, "Other") {
-		t.Errorf("last editor choice = %q, want an %q option", last, "Other")
+	if len(editorPresets) == 0 {
+		t.Fatal("editorPresets should not be empty")
+	}
+	last := editorPresets[len(editorPresets)-1]
+	if last.command != "" {
+		t.Errorf("last editor preset = %q, want an empty command marking the custom-entry option", last.command)
+	}
+	for _, preset := range editorPresets {
+		if strings.TrimSpace(preset.name) == "" {
+			t.Errorf("editor preset has an empty name: %+v", preset)
+		}
 	}
 }

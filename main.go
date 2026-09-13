@@ -1,56 +1,288 @@
 package main
 
 import (
-	"flag"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/manifoldco/promptui"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
 	"github.com/rubiin/projecto/helper"
+	"github.com/urfave/cli/v3"
 )
 
-// configTemplate is the default configuration written when no configuration
-// file exists yet.
-const configTemplate = `{
-	"commandToOpen": "code",
-	"projects": []
-}`
-
-// editorChoices are the editor options offered when registering a project
-// with a per-project editor. The last entry prompts for a custom command.
-var editorChoices = []string{"Code", "Atom", "Sublime", "Other"}
-
-// promptTemplate defines the shared promptui styling for text prompts.
-var promptTemplate = &promptui.PromptTemplates{
-	Prompt:  "{{ . }} ",
-	Valid:   "{{ . | green }} ",
-	Invalid: "{{ . | red }} ",
-	Success: "{{ . | bold }} ",
+// editorPresets maps the editor options offered when registering a project
+// with a per-project editor to their commands. An empty command prompts for
+// a custom one.
+var editorPresets = []struct {
+	name    string
+	command string
+}{
+	{"VS Code", "code"},
+	{"Atom", "atom"},
+	{"Sublime Text", "subl"},
+	{"Other…", ""},
 }
 
-// selectTemplate defines the promptui styling for project selection lists.
-var selectTemplate = &promptui.SelectTemplates{
-	Label:    "{{ . }}?",
-	Active:   "\U0001F449 {{ .Name | cyan }}",
-	Inactive: "   {{ .Name | cyan }}",
-	Selected: "\U0001F449 {{ .Name | cyan }}",
+// listStyles holds the lipgloss styles shared by all pickers.
+type listStyles struct {
+	title    lipgloss.Style
+	item     lipgloss.Style
+	selected lipgloss.Style
+	prompt   lipgloss.Style
+	hint     lipgloss.Style
 }
 
-// validateCustomEditor requires at least one letter so an empty custom
-// editor command cannot be stored.
-func validateCustomEditor(input string) error {
-	if strings.TrimSpace(input) == "" {
-		return fmt.Errorf("editor command cannot be empty")
+// newListStyles returns the picker styles.
+func newListStyles() listStyles {
+	return listStyles{
+		title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
+		item:     lipgloss.NewStyle().PaddingLeft(2),
+		selected: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12")).PaddingLeft(0),
+		prompt:   lipgloss.NewStyle().Bold(true).MarginBottom(1),
+		hint:     lipgloss.NewStyle().Faint(true).MarginTop(1),
 	}
-	return nil
+}
+
+// keyMap defines the keybindings for the pickers.
+type keyMap struct {
+	up       key.Binding
+	down     key.Binding
+	accept   key.Binding
+	cancel   key.Binding
+	tab      key.Binding
+	shiftTab key.Binding
+}
+
+func newKeyMap() keyMap {
+	return keyMap{
+		up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		accept:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+		cancel:   key.NewBinding(key.WithKeys("esc", "ctrl+c"), key.WithHelp("esc", "cancel")),
+		tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next editor")),
+		shiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev editor")),
+	}
+}
+
+// selectModel is a Bubble Tea model that shows a list of strings and returns
+// the chosen index.
+type selectModel struct {
+	label    string
+	choices  []string
+	cursor   int
+	keys     keyMap
+	styles   listStyles
+	choiceCh chan string
+}
+
+// newSelectModel builds a picker for the given choices.
+func newSelectModel(label string, choices []string) selectModel {
+	return selectModel{
+		label:    label,
+		choices:  choices,
+		keys:     newKeyMap(),
+		styles:   newListStyles(),
+		choiceCh: make(chan string, 1),
+	}
+}
+
+func (m selectModel) Init() tea.Cmd { return nil }
+
+func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.cancel):
+			m.choiceCh <- ""
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.accept):
+			m.choiceCh <- m.choices[m.cursor]
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.up):
+			m.cursor = (m.cursor - 1 + len(m.choices)) % len(m.choices)
+		case key.Matches(msg, m.keys.down):
+			m.cursor = (m.cursor + 1) % len(m.choices)
+		}
+	}
+	return m, nil
+}
+
+func (m selectModel) View() tea.View {
+	return tea.NewView(m.render())
+}
+
+func (m selectModel) render() string {
+	var b strings.Builder
+
+	b.WriteString(m.styles.prompt.Render(m.label))
+	b.WriteString("\n")
+
+	for i, choice := range m.choices {
+		style := m.styles.item
+		if i == m.cursor {
+			style = m.styles.selected
+			b.WriteString("❯ ")
+		} else {
+			b.WriteString("  ")
+		}
+		b.WriteString(style.Render(choice))
+		b.WriteString("\n")
+	}
+
+	b.WriteString(m.styles.hint.Render("(↑/↓ to move, enter to select, esc to cancel)"))
+	return b.String()
+}
+
+// editorModel is a Bubble Tea model that prompts for a free-form editor
+// command with tab-completion over the known presets.
+type editorModel struct {
+	label    string
+	input    textinput.Model
+	presets  []string
+	cursor   int
+	keys     keyMap
+	styles   listStyles
+	choiceCh chan string
+}
+
+// newEditorModel builds the custom editor prompt.
+func newEditorModel() editorModel {
+	ti := textinput.New()
+	ti.Placeholder = "e.g. code, vim, idea"
+	ti.Focus()
+	ti.CharLimit = 100
+	ti.SetWidth(40)
+
+	return editorModel{
+		label:    "Enter the editor command",
+		input:    ti,
+		presets:  []string{"code", "atom", "subl", "vim", "idea"},
+		keys:     newKeyMap(),
+		styles:   newListStyles(),
+		choiceCh: make(chan string, 1),
+	}
+}
+
+func (m editorModel) Init() tea.Cmd { return textinput.Blink }
+
+func (m editorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		switch {
+		case key.Matches(msg, m.keys.cancel):
+			m.choiceCh <- ""
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.accept):
+			value := strings.TrimSpace(m.input.Value())
+			if value == "" {
+				return m, nil
+			}
+			m.choiceCh <- value
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.tab), key.Matches(msg, m.keys.shiftTab):
+			if len(m.presets) == 0 {
+				break
+			}
+			delta := 1
+			if key.Matches(msg, m.keys.shiftTab) {
+				delta = -1
+			}
+			m.cursor = (m.cursor + delta + len(m.presets)) % len(m.presets)
+			m.input.SetValue(m.presets[m.cursor])
+			m.input.CursorEnd()
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m editorModel) View() tea.View {
+	return tea.NewView(m.render())
+}
+
+func (m editorModel) render() string {
+	var b strings.Builder
+
+	b.WriteString(m.styles.prompt.Render(m.label))
+	b.WriteString("\n")
+	b.WriteString(m.input.View())
+	b.WriteString("\n")
+
+	if m.input.Value() == "" {
+		b.WriteString(m.styles.hint.Render(strings.Join(m.presets, " · ")))
+		b.WriteString("\n")
+	}
+
+	b.WriteString(m.styles.hint.Render("(tab to cycle suggestions, enter to confirm, esc to cancel)"))
+	return b.String()
+}
+
+// promptSelect shows a picker in the terminal and returns the chosen index,
+// or -1 if the user cancelled.
+func promptSelect(label string, choices []string) int {
+	model := newSelectModel(label, choices)
+	p := tea.NewProgram(model)
+
+	final, err := p.Run()
+	if err != nil {
+		helper.CheckError(err)
+	}
+
+	choice := final.(selectModel).choiceCh
+	select {
+	case c := <-choice:
+		for i, candidate := range choices {
+			if candidate == c {
+				return i
+			}
+		}
+		return -1
+	default:
+		// The program ended without a choice (e.g. ctrl+c was mapped to quit
+		// directly). Treat it as a cancellation.
+		return -1
+	}
+}
+
+// promptEditor shows the custom editor prompt and returns the entered
+// command, or an empty string if the user cancelled.
+func promptEditor() string {
+	model := newEditorModel()
+	p := tea.NewProgram(model)
+
+	final, err := p.Run()
+	if err != nil {
+		helper.CheckError(err)
+	}
+
+	select {
+	case value := <-final.(editorModel).choiceCh:
+		return value
+	default:
+		return ""
+	}
 }
 
 // setupConfig creates the configuration file with defaults if it is missing
-// and returns the configuration directory.
+// and returns the configuration directory. The default global editor is taken
+// from $EDITOR when set, falling back to "code".
 func setupConfig() (string, error) {
+	// Move a pre-existing config from the old location (the user config
+	// directory root) into the projecto subdirectory, if needed.
+	if _, err := helper.MigrateLegacyConfig(); err != nil {
+		return "", err
+	}
+
 	configPath, err := helper.ConfigPath()
 	if err != nil {
 		return "", err
@@ -62,38 +294,40 @@ func setupConfig() (string, error) {
 		return configDir, nil
 	}
 
+	config := helper.Projecto{
+		CommandToOpen: helper.DefaultEditor(),
+	}
+
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return "", err
 	}
 
-	if err := os.WriteFile(configPath, []byte(configTemplate), 0o644); err != nil {
-		return "", err
-	}
+	helper.WriteConfigFile(config, configDir)
 	return configDir, nil
 }
 
-// chooseEditor prompts the user to pick an editor for the project being
-// added and returns the corresponding command.
-func chooseEditor() string {
-	list := promptui.Select{
-		Label: "Select an editor for this project",
-		Items: editorChoices,
-	}
-	index, _, err := list.Run()
-	helper.CheckError(err)
-
-	if index != len(editorChoices)-1 {
-		return strings.ToLower(editorChoices[index])
+// chooseEditor lets the user pick a preset or enter a custom editor command,
+// returning the corresponding shell command. Returns false if cancelled.
+func chooseEditor() (string, bool) {
+	choices := make([]string, len(editorPresets))
+	for i, preset := range editorPresets {
+		choices[i] = preset.name
 	}
 
-	prompt := promptui.Prompt{
-		Label:     "Enter the editor command",
-		Templates: promptTemplate,
-		Validate:  validateCustomEditor,
+	index := promptSelect("Select an editor for this project", choices)
+	if index < 0 {
+		return "", false
 	}
-	command, err := prompt.Run()
-	helper.CheckError(err)
-	return command
+
+	if command := editorPresets[index].command; command != "" {
+		return command, true
+	}
+
+	command := promptEditor()
+	if command == "" {
+		return "", false
+	}
+	return command, true
 }
 
 // projectNames extracts the names of all registered projects.
@@ -106,15 +340,9 @@ func projectNames(projects []helper.Project) []string {
 }
 
 // selectProject shows an interactive list of project names and returns the
-// chosen index.
+// chosen index, or -1 if the user cancelled.
 func selectProject(label string, projects []helper.Project) int {
-	list := promptui.Select{
-		Label: label,
-		Items: projectNames(projects),
-	}
-	index, _, err := list.Run()
-	helper.CheckError(err)
-	return index
+	return promptSelect(label, projectNames(projects))
 }
 
 // openProject launches the configured editor for the selected project.
@@ -135,6 +363,17 @@ func openProject(config helper.Projecto, index int) {
 // addProject registers the current directory as a new project, optionally
 // prompting for a per-project editor.
 func addProject(configDir string, withEditor bool) {
+	var editor string
+
+	if withEditor {
+		chosen, ok := chooseEditor()
+		if !ok {
+			fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
+			return
+		}
+		editor = chosen
+	}
+
 	config := helper.ReadConfigFile(configDir)
 
 	path, name := helper.CurrentDir()
@@ -143,9 +382,8 @@ func addProject(configDir string, withEditor bool) {
 		Path: path,
 		Name: name,
 	}
-
-	if withEditor {
-		newProject.Editor = chooseEditor()
+	if editor != "" {
+		newProject.Editor = editor
 	}
 
 	config.Projects = append(config.Projects, newProject)
@@ -158,6 +396,10 @@ func addProject(configDir string, withEditor bool) {
 func removeProject(configDir string) {
 	config := helper.ReadConfigFile(configDir)
 	index := selectProject("Select a project to remove", config.Projects)
+	if index < 0 {
+		fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
+		return
+	}
 
 	config.Projects = append(config.Projects[:index], config.Projects[index+1:]...)
 	helper.WriteConfigFile(config, configDir)
@@ -169,7 +411,10 @@ func removeProject(configDir string) {
 func removeProjectEditor(configDir string) {
 	config := helper.ReadConfigFile(configDir)
 	index := selectProject("Select a project to remove its editor", config.Projects)
-
+	if index < 0 {
+		fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
+		return
+	}
 	config.Projects[index].Editor = ""
 	helper.WriteConfigFile(config, configDir)
 
@@ -186,43 +431,106 @@ func setGlobalEditor(configDir string, editor string) {
 	fmt.Println(helper.GREEN + "✅ Successfully updated editor" + helper.RESET)
 }
 
-func main() {
+// loadConfigDir runs setupConfig and terminates the program on failure.
+func loadConfigDir() string {
 	configDir, err := setupConfig()
 	helper.CheckError(err)
+	return configDir
+}
 
-	add := flag.Bool("add", false, "Add the current directory as a project")
-	remove := flag.Bool("rm", false, "Remove a project")
-	open := flag.Bool("open", false, "Open a project")
-	seteditor := flag.String("seteditor", "code", "Set the global editor command used for projects without their own editor")
-	editor := flag.Bool("editor", false, "Set an editor for this project (use with --add)")
-	rmeditor := flag.Bool("rmeditor", false, "Remove the editor from a project")
-	edit := flag.Bool("edit", false, "Open the config file in the default editor")
+func newApp() *cli.Command {
+	return &cli.Command{
+		Name:                  "projecto",
+		Usage:                 "Launch your projects in your editor of choice",
+		Version:               version,
+		EnableShellCompletion: true,
+		Commands: []*cli.Command{
+			{
+				Name:    "add",
+				Aliases: []string{"a"},
+				Usage:   "Add the current directory as a project",
+				Flags: []cli.Flag{
+					&cli.BoolFlag{
+						Name:    "editor",
+						Aliases: []string{"e"},
+						Usage:   "Choose a dedicated editor for this project",
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					addProject(loadConfigDir(), cmd.Bool("editor"))
+					return nil
+				},
+			},
+			{
+				Name:    "open",
+				Aliases: []string{"o"},
+				Usage:   "Open a project from an interactive list",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					configDir := loadConfigDir()
+					config := helper.ReadConfigFile(configDir)
 
-	flag.Parse()
+					if len(config.Projects) == 0 {
+						return fmt.Errorf("no projects registered; add one with 'projecto add'")
+					}
 
-	switch {
-	case helper.IsFlagPassed("seteditor"):
-		setGlobalEditor(configDir, *seteditor)
-	case *edit:
-		helper.OpenConfigFile()
-	case *open:
-		config := helper.ReadConfigFile(configDir)
+					index := promptSelect("Available projects", projectNames(config.Projects))
+					if index < 0 {
+						fmt.Println(helper.YELLOW + "Cancelled" + helper.RESET)
+						return nil
+					}
 
-		list := promptui.Select{
-			Label:     "Available projects",
-			Items:     config.Projects,
-			Size:      8,
-			Templates: selectTemplate,
-		}
-		index, _, err := list.Run()
-		helper.CheckError(err)
+					openProject(config, index)
+					return nil
+				},
+			},
+			{
+				Name:    "rm",
+				Aliases: []string{"remove"},
+				Usage:   "Remove a project",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					removeProject(loadConfigDir())
+					return nil
+				},
+			},
+			{
+				Name:  "seteditor",
+				Usage: "Set the global editor command used for projects without their own editor (defaults to $EDITOR)",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					editor := cmd.Args().First()
+					if editor == "" {
+						editor = helper.DefaultEditor()
+					}
+					setGlobalEditor(loadConfigDir(), editor)
+					return nil
+				},
+			},
+			{
+				Name:  "rmeditor",
+				Usage: "Remove the editor override from a project",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					removeProjectEditor(loadConfigDir())
+					return nil
+				},
+			},
+			{
+				Name:  "edit",
+				Usage: "Open the configuration file in the default application",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					loadConfigDir()
+					helper.OpenConfigFile()
+					return nil
+				},
+			},
+		},
+	}
+}
 
-		openProject(config, index)
-	case *add:
-		addProject(configDir, *editor)
-	case *rmeditor:
-		removeProjectEditor(configDir)
-	case *remove:
-		removeProject(configDir)
+// version is overridden at build time by GoReleaser.
+var version = "dev"
+
+func main() {
+	if err := newApp().Run(context.Background(), os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }

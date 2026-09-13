@@ -4,26 +4,111 @@ package helper
 
 import (
 	"encoding/json"
-	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // configFileName is the name of the configuration file stored in the
-// user's configuration directory.
+// projecto configuration directory.
 const configFileName = "projecto.json"
 
-// ConfigPath returns the full path of the projecto configuration file,
-// located in the user's OS-specific configuration directory.
+// appName is the subdirectory of the user configuration directory where
+// projecto stores its data.
+const appName = "projecto"
+
+// DefaultEditor returns the editor command to use as the global default:
+// the basename of $EDITOR when set, falling back to "code". The value is
+// trimmed; arguments (e.g. "code --wait") are stripped because the editor
+// is launched with the project path as its sole argument.
+func DefaultEditor() string {
+	editor := strings.TrimSpace(os.Getenv("EDITOR"))
+	if editor == "" {
+		return "code"
+	}
+	if base := filepath.Base(strings.Fields(editor)[0]); base != "." {
+		return base
+	}
+	return editor
+}
+
+// ConfigDir returns the directory where projecto stores its data, following
+// the XDG Base Directory Specification: $XDG_CONFIG_HOME/projecto when
+// XDG_CONFIG_HOME is set to an absolute path, otherwise the platform default
+// with a "projecto" subdirectory appended (~/.config/projecto on Linux,
+// ~/Library/Application Support/projecto on macOS, %AppData%\projecto on
+// Windows).
+func ConfigDir() (string, error) {
+	base, err := userConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, appName), nil
+}
+
+// ConfigPath returns the full path of the projecto configuration file inside
+// ConfigDir.
 func ConfigPath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := ConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, configFileName), nil
+}
+
+// MigrateLegacyConfig moves a configuration file from the pre-projecto
+// subdirectory location (the user configuration directory root) to the
+// current one, if the legacy file exists and the new one does not. It
+// reports whether a migration was performed.
+func MigrateLegacyConfig() (bool, error) {
+	base, err := userConfigDir()
+	if err != nil {
+		return false, err
+	}
+
+	legacy := filepath.Join(base, configFileName)
+	if !ConfigFileExists(legacy) {
+		return false, nil
+	}
+
+	current, err := ConfigPath()
+	if err != nil {
+		return false, err
+	}
+	if ConfigFileExists(current) {
+		return false, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(current), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.Rename(legacy, current); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// userConfigDir resolves the user configuration directory. It prefers a
+// valid XDG_CONFIG_HOME (non-empty and absolute) over os.UserConfigDir,
+// which neither honors XDG_CONFIG_HOME on macOS nor validates that the
+// value is absolute.
+func userConfigDir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		if !filepath.IsAbs(xdg) {
+			return "", fmt.Errorf("XDG_CONFIG_HOME is set but not an absolute path: %q", xdg)
+		}
+		return filepath.Clean(xdg), nil
+	}
+
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // ConfigFileExists reports whether the configuration file exists and is a
@@ -55,18 +140,6 @@ func CheckError(e error) {
 	if e != nil {
 		log.Fatalln(e)
 	}
-}
-
-// IsFlagPassed reports whether the named command-line flag was explicitly
-// set on the command line.
-func IsFlagPassed(name string) bool {
-	found := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
 }
 
 // ReadConfigFile reads and parses the projecto configuration file from the
