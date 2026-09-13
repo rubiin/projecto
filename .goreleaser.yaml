@@ -24,6 +24,8 @@ builds:
       - windows
       - darwin
 
+
+
 archives:
   - formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
@@ -46,11 +48,8 @@ archives:
         strip_parent: true
 
 changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
+  sort: desc
+  use: git
 
 aurs:
   - name: projecto-bin
