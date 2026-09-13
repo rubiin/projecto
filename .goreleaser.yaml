@@ -1,0 +1,66 @@
+version: 2
+
+project_name: projecto
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    # main.go declares `version`; release builds override it here.
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    goos:
+      - linux
+      - windows
+      - darwin
+
+archives:
+  - formats: [tar.gz]
+    # this name template makes the OS and Arch compatible with the results of `uname`.
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    # use zip for windows archives
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+aurs:
+  - name: projecto-bin
+    homepage: https://github.com/rubiin/projecto
+    description: A fast, Go rewrite of [phoney badger's pokemon-colorscripts](https://gitlab.com/phoneybadger/pokemon-colorscripts) that prints Pokémon sprites in color directly in your terminal.
+    license: GPL-3.0-only
+    maintainers:
+      - "rubiin <roobin.bhandari@gmail.com>"
+    git_url: ssh://aur@aur.archlinux.org/projecto-bin.git
+    private_key: "{{ .Env.AUR_KEY }}"
+    provides:
+      - projecto
+    conflicts:
+      - projecto
+      - projecto-git
+    package: |-
+      # bin
+      install -Dm755 "./projecto" "${pkgdir}/usr/bin/projecto"
+      # license
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/projecto/LICENSE"
+
+release:
+  footer: >-
+
+    ---
+
+    Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
