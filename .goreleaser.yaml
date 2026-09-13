@@ -24,6 +24,9 @@ builds:
       - windows
       - darwin
 
+changelog:
+  use: git
+
 archives:
   - formats: [tar.gz]
     # this name template makes the OS and Arch compatible with the results of `uname`.
