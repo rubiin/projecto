@@ -27,7 +27,9 @@ var editorPresets = []struct {
 	command string
 }{
 	{"VS Code", "code"},
-	{"Atom", "atom"},
+	{"Zed", "zed"},
+	{"Cursor", "cursor"},
+	{"Neovim", "nvim"},
 	{"Sublime Text", "subl"},
 	{"Other…", ""},
 }
