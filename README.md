@@ -7,7 +7,7 @@
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
 
-<img width="200" alt="projecto" src="https://github.com/user-attachments/assets/b11863e8-d24a-4d14-930c-bdc7e4348b96" />
+<img width="130" alt="projecto" src="https://github.com/user-attachments/assets/b11863e8-d24a-4d14-930c-bdc7e4348b96" />
 
 Projecto is a small CLI tool that launches your project folders directly in your editor of choice. Instead of opening a terminal, navigating to the project, and typing an editor command, Projecto keeps an interactive registry of your projects and opens the selected one in a single command.
 
@@ -147,4 +147,6 @@ Please make sure to update tests as appropriate.
 
 ## License
 
-Distributed under the [GPL-3.0 License](LICENSE).
+[GPL-3.0](./LICENSE)
+
+Made with ❤️ for opensource.
