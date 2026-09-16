@@ -47,21 +47,6 @@ archives:
         dst: completions
         strip_parent: true
 
-changelog:
-  sort: desc
-  use: git
-
-  groups:
-    - title: 🚀 New Features
-      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
-      order: 0
-    - title: "🐛 Bug Fixes"
-      regexp: '^.*?bug(\([[:word:]]+\))??!?:.+$'
-      order: 1
-    - title: Others
-      order: 999
-
-
 nfpms:
   - package_name: ignit
     file_name_template: '{{ .ConventionalFileName }}'
