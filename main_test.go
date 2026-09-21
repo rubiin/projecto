@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -473,5 +474,92 @@ func TestEditorChoicesIncludeCustomOption(t *testing.T) {
 		if strings.TrimSpace(preset.name) == "" {
 			t.Errorf("editor preset has an empty name: %+v", preset)
 		}
+	}
+}
+
+func TestNewAppCommands(t *testing.T) {
+	root := newApp()
+
+	if root.Name() != "projecto" {
+		t.Errorf("root name = %q, want projecto", root.Name())
+	}
+	if root.Version != version {
+		t.Errorf("root version = %q, want %q", root.Version, version)
+	}
+
+	// The bare `projecto` invocation must open the picker, so the root has
+	// to be runnable.
+	if root.RunE == nil {
+		t.Error("root command has no RunE; bare `projecto` would print help instead of opening the picker")
+	}
+
+	commands := map[string][]string{
+		"add":       {"a"},
+		"open":      {"o"},
+		"list":      {"ls"},
+		"rm":        {"remove"},
+		"seteditor": nil,
+		"rmeditor":  nil,
+		"edit":      nil,
+	}
+	for name, aliases := range commands {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil {
+			t.Errorf("command %q not found: %v", name, err)
+			continue
+		}
+		if cmd.Name() != name {
+			t.Errorf("Find(%q) returned %q", name, cmd.Name())
+		}
+		if !reflect.DeepEqual(cmd.Aliases, aliases) {
+			t.Errorf("command %q aliases = %v, want %v", name, cmd.Aliases, aliases)
+		}
+	}
+
+	flags := map[string]string{"add": "editor", "open": "verbose"}
+	for command, flag := range flags {
+		cmd, _, err := root.Find([]string{command})
+		if err != nil {
+			t.Fatalf("command %q not found: %v", command, err)
+		}
+		if cmd.Flags().Lookup(flag) == nil {
+			t.Errorf("command %q is missing the --%s flag", command, flag)
+		}
+	}
+}
+
+func TestCompletionCommandPwshAlias(t *testing.T) {
+	root := newApp()
+
+	completion, _, err := root.Find([]string{"completion"})
+	if err != nil {
+		t.Fatalf("completion command not found: %v", err)
+	}
+
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		if _, _, err := completion.Find([]string{shell}); err != nil {
+			t.Errorf("completion %s subcommand not found: %v", shell, err)
+		}
+	}
+
+	// urfave/cli accepted `pwsh` as an alias for `powershell`; keep it working
+	// so scripts written against the old binary do not break silently.
+	pwsh, _, err := completion.Find([]string{"pwsh"})
+	if err != nil {
+		t.Fatalf("completion pwsh alias not found: %v", err)
+	}
+	if pwsh.Name() != "powershell" {
+		t.Errorf("completion pwsh resolved to %q, want powershell", pwsh.Name())
+	}
+}
+
+func TestCompletionRejectsUnknownShell(t *testing.T) {
+	root := newApp()
+	root.SetArgs([]string{"completion", "nope"})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+
+	if err := root.Execute(); err == nil {
+		t.Error("completion nope succeeded, want an error for an unrecognized shell")
 	}
 }

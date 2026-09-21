@@ -79,7 +79,7 @@ projecto open
 
 ### Shell completions
 
-Projecto can generate completion scripts for bash, zsh, fish, and PowerShell via [urfave/cli](https://github.com/urfave/cli):
+Projecto can generate completion scripts for bash, zsh, fish, and PowerShell via [cobra](https://github.com/spf13/cobra):
 
 ```sh
 # bash

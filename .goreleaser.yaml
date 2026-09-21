@@ -10,7 +10,7 @@ before:
     - sh -c 'go run . completion bash > .buildcache/completions/projecto.bash'
     - sh -c 'go run . completion zsh > .buildcache/completions/_projecto'
     - sh -c 'go run . completion fish > .buildcache/completions/projecto.fish'
-    - sh -c 'go run . completion pwsh > .buildcache/completions/_projecto.ps1'
+    - sh -c 'go run . completion powershell > .buildcache/completions/_projecto.ps1'
 
 builds:
   - env:
@@ -48,10 +48,10 @@ archives:
         strip_parent: true
 
 nfpms:
-  - package_name: ignit
+  - package_name: projecto
     file_name_template: '{{ .ConventionalFileName }}'
-    homepage: https://github.com/rubiin/ignit
-    description: Quickly generate .gitignore files for your projects from a curated list of environment templates.
+    homepage: https://github.com/rubiin/projecto
+    description: Launch your project folders directly in your editor of choice from a single command.
     license: GPL-3.0-only
     maintainer: rubiin <roobin.bhandari@gmail.com>
     formats:
@@ -61,7 +61,7 @@ nfpms:
     bindir: /usr/bin
     contents:
       - src: ./LICENSE
-        dst: /usr/share/licenses/ignit/LICENSE
+        dst: /usr/share/licenses/projecto/LICENSE
 
 changelog:
   sort: desc

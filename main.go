@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,7 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/rubiin/projecto/helper"
-	"github.com/urfave/cli/v3"
+	"github.com/spf13/cobra"
 )
 
 // editorPresets maps the editor options offered when registering a project
@@ -790,108 +789,136 @@ func loadConfigDir() string {
 	return configDir
 }
 
-func newApp() *cli.Command {
-	return &cli.Command{
-		Name:                  "projecto",
-		Usage:                 "Launch your projects in your editor of choice",
-		Version:               version,
-		EnableShellCompletion: true,
-		Commands: []*cli.Command{
-			{
-				Name:      "add",
-				Aliases:   []string{"a"},
-				Usage:     "Add a directory as a project (defaults to the current directory)",
-				ArgsUsage: "[directory]",
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:    "editor",
-						Aliases: []string{"e"},
-						Usage:   "Choose a dedicated editor for this project",
-					},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					addProject(loadConfigDir(), cmd.Args().First(), cmd.Bool("editor"))
-					return nil
-				},
-			},
-			{
-				Name:    "open",
-				Aliases: []string{"o"},
-				Usage:   "Open a project from an interactive list",
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:    "verbose",
-						Aliases: []string{"v"},
-						Usage:   "Show the editor command being invoked",
-					},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					openProjectFlow(loadConfigDir(), cmd.Bool("verbose"))
-					return nil
-				},
-			},
-			{
-				Name:    "list",
-				Aliases: []string{"ls"},
-				Usage:   "List registered projects without opening one",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					listProjects(helper.ReadConfigFile(loadConfigDir()))
-					return nil
-				},
-			},
-			{
-				Name:    "rm",
-				Aliases: []string{"remove"},
-				Usage:   "Remove a project",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					removeProject(loadConfigDir())
-					return nil
-				},
-			},
-			{
-				Name:  "seteditor",
-				Usage: "Set the global editor command used for projects without their own editor (defaults to $EDITOR)",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					editor := cmd.Args().First()
-					if editor == "" {
-						editor = helper.DefaultEditor()
-					}
-					setGlobalEditor(loadConfigDir(), editor)
-					return nil
-				},
-			},
-			{
-				Name:  "rmeditor",
-				Usage: "Remove the editor override from a project",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					removeProjectEditor(loadConfigDir())
-					return nil
-				},
-			},
-			{
-				Name:  "edit",
-				Usage: "Open the configuration file in the default application",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					loadConfigDir()
-					helper.OpenConfigFile()
-					return nil
-				},
-			},
+func newApp() *cobra.Command {
+	root := &cobra.Command{
+		Use:           "projecto",
+		Short:         "Launch your projects in your editor of choice",
+		Version:       version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		// Bare `projecto` (no subcommand) opens the picker directly.
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			openProjectFlow(loadConfigDir(), false)
+			return nil
 		},
 	}
+
+	var addEditor bool
+	add := &cobra.Command{
+		Use:     "add [directory]",
+		Aliases: []string{"a"},
+		Short:   "Add a directory as a project (defaults to the current directory)",
+		Args:    cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := ""
+			if len(args) > 0 {
+				dir = args[0]
+			}
+			addProject(loadConfigDir(), dir, addEditor)
+			return nil
+		},
+	}
+	add.Flags().BoolVarP(&addEditor, "editor", "e", false, "Choose a dedicated editor for this project")
+
+	var openVerbose bool
+	open := &cobra.Command{
+		Use:     "open",
+		Aliases: []string{"o"},
+		Short:   "Open a project from an interactive list",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			openProjectFlow(loadConfigDir(), openVerbose)
+			return nil
+		},
+	}
+	open.Flags().BoolVarP(&openVerbose, "verbose", "v", false, "Show the editor command being invoked")
+
+	list := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List registered projects without opening one",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			listProjects(helper.ReadConfigFile(loadConfigDir()))
+			return nil
+		},
+	}
+
+	rm := &cobra.Command{
+		Use:     "rm",
+		Aliases: []string{"remove"},
+		Short:   "Remove a project",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			removeProject(loadConfigDir())
+			return nil
+		},
+	}
+
+	setEditor := &cobra.Command{
+		Use:   "seteditor [command]",
+		Short: "Set the global editor command used for projects without their own editor (defaults to $EDITOR)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			editor := ""
+			if len(args) > 0 {
+				editor = args[0]
+			}
+			if editor == "" {
+				editor = helper.DefaultEditor()
+			}
+			setGlobalEditor(loadConfigDir(), editor)
+			return nil
+		},
+	}
+
+	rmEditor := &cobra.Command{
+		Use:   "rmeditor",
+		Short: "Remove the editor override from a project",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			removeProjectEditor(loadConfigDir())
+			return nil
+		},
+	}
+
+	edit := &cobra.Command{
+		Use:   "edit",
+		Short: "Open the configuration file in the default application",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loadConfigDir()
+			helper.OpenConfigFile()
+			return nil
+		},
+	}
+
+	root.AddCommand(add, open, list, rm, setEditor, rmEditor, edit)
+
+	// Let cobra generate its completion command, then restore urfave/cli's
+	// `pwsh` alias so scripts written against the old binary keep working.
+	root.InitDefaultCompletionCmd()
+	if completion, _, err := root.Find([]string{"completion"}); err == nil {
+		// Without a RunE, cobra prints help for an unrecognized shell and
+		// exits 0, silently producing no script. Making the command runnable
+		// lets its NoArgs validation reject typos instead.
+		completion.RunE = func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		}
+		if powershell, _, err := completion.Find([]string{"powershell"}); err == nil {
+			powershell.Aliases = append(powershell.Aliases, "pwsh")
+		}
+	}
+
+	return root
 }
 
 // version is overridden at build time by GoReleaser.
 var version = "dev"
 
 func main() {
-	args := os.Args[1:]
-	// Bare `projecto` (no subcommand) opens the picker directly.
-	if len(args) == 0 {
-		args = []string{"open"}
-	}
-
-	if err := newApp().Run(context.Background(), append([]string{os.Args[0]}, args...)); err != nil {
+	if err := newApp().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
